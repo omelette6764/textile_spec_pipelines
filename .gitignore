@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.env
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Outputs & big files
+out_clean/
+figs/
+*.png
+*.pdf
+*.zip
+
+# Data (keep raw data private unless you want it public)
+data/
+*.csv
+!example_small.csv  # <- if you want to include a tiny demo file
+
+# Jupyter
+.ipynb_checkpoints/
