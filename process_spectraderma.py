@@ -120,7 +120,7 @@ def main():
         t = str(x).strip().lower()
         if t.startswith("first right"): return "first right"
         if t.startswith("first left"):  return "first left"
-        if "top" in t and "middle" in t: return "top middle"
+        if "top" in t and "middle" in t and "(actual)" in t: return "top middle"
         if "bottom" in t and "middle" in t: return "bottom middle"
         if t.startswith("second left"): return "second left"
         if t.startswith("second right"): return "second right"

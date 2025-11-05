@@ -46,7 +46,7 @@ def main():
 
     # ------------- A) Visualize amplitude% & AUC% (MEAN trace) -------------
     mean_rows = m[m["channel"]=="mean"].copy()
-    locations = ["bottom middle","first right","first left"]
+    locations = ["top middle", "bottom middle","first right","first left", "second right", "second left"]
     gulps = ["gulp 1","gulp 2","gulp 3"]
 
     # Heatmaps
