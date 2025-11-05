@@ -151,7 +151,7 @@ def main():
 
     # === Compute per-segment metrics (mean across channels + channel-wise) ===
     rows = []
-    locations = [v for v in ["bottom middle","first right","first left"] if (df["_location"]==v).any()]
+    locations = [v for v in ["top middle", "bottom middle","first right","first left", "second right", "second left"] if (df["_location"]==v).any()]
     gulps = [v for v in ["gulp 1","gulp 2","gulp 3"] if (df["_gulp"]==v).any()]
 
     for loc in locations:
