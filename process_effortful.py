@@ -12,6 +12,7 @@ import pandas as pd
 import pywt
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
+import time, os
 
 
 def monotonic_local_time(series: pd.Series):
@@ -245,7 +246,20 @@ def main():
         return
 
     metrics = pd.DataFrame(rows)
-    metrics.to_csv(outdir / "metrics_pct_of_effortful.csv", index=False)
+    #metrics.to_csv(outdir / "metrics_pct_of_effortful.csv", index=False)
+
+    #gives me a warning if my file is still open/can't be accessed
+    csv_path = outdir / "metrics_pct_of_effortful.csv"
+    for _ in range(3):
+        try:
+            metrics.to_csv(csv_path, index=False)
+            break
+        except PermissionError:
+            print("⚠️ File is in use, retrying in 2 seconds...")
+            time.sleep(2)
+    else:
+        print(f"❌ Could not write {csv_path}, file may be locked by another program.")
+
 
     if metrics.empty:
         print("⚠️ No metrics computed — likely no matching gulps or locations. Skipping pivot tables.")
