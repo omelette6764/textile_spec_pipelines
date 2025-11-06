@@ -349,7 +349,7 @@ def main():
     ###comparison of metrics among each task, i.e. masako, effortful, and water trials
 
     # === Load and clean data ===
-    df = pd.read_csv("metrics_pct_of_effortful.csv")
+    df = pd.read_csv(args.metrics)
 
     # Remove mean rows
     df = df[~df["gulp"].str.contains("mean", case=False, na=False)]
