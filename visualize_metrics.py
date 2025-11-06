@@ -33,7 +33,7 @@ def radar_plot(ax, values, labels, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--metrics", required=True, help="Path to out_clean/metrics_pct.csv")
+    ap.add_argument("--metrics", required=True, help="Path to out_clean/metrics_pct_of_effortful.csv")
     ap.add_argument("--out", default="figs", help="Output folder for figures")
     args = ap.parse_args()
 
@@ -47,7 +47,8 @@ def main():
     # ------------- A) Visualize amplitude% & AUC% (MEAN trace) -------------
     mean_rows = m[m["channel"]=="mean"].copy()
     locations = ["top middle", "bottom middle","first right","first left", "second right", "second left"]
-    gulps = ["gulp 1","gulp 2","gulp 3"]
+    #gulps = ["gulp 1","gulp 2","gulp 3"]
+    gulps = ["effortful swallow 1","effortful swallow 2","effortful swallow 3", "effortful swallow 4", "effortful swallow 5"]
 
     # Heatmaps
     amp_tbl = mean_rows.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean").reindex(index=locations, columns=gulps)
@@ -66,8 +67,8 @@ def main():
         fig.colorbar(im, ax=ax, shrink=0.8)
         fig.tight_layout(); fig.savefig(outdir / fname, dpi=150); plt.close(fig)
 
-    heatmap(amp_tbl, "Amplitude Δ% (mean) — location × gulp", "heatmap_amplitude_pct_mean.png")
-    heatmap(auc_tbl, "AUC Δ% (mean) — location × gulp", "heatmap_auc_pct_mean.png")
+    heatmap(amp_tbl, "Amplitude Δ% (mean) — location × gulp", "heatmap_amplitude_pct_mean_of_effortful.png")
+    heatmap(auc_tbl, "AUC Δ% (mean) — location × gulp", "heatmap_auc_pct_mean_of_effortful.png")
 
     # Grouped bars (amplitude)
     def grouped_bar(df, title, fname, ylabel):
@@ -80,8 +81,8 @@ def main():
         ax.set_ylabel(ylabel); ax.set_title(title); ax.legend()
         fig.tight_layout(); fig.savefig(outdir / fname, dpi=150); plt.close(fig)
 
-    grouped_bar(amp_tbl, "Amplitude Δ% (mean) — grouped bars", "bars_amplitude_pct_mean.png", "Amplitude Δ%")
-    grouped_bar(auc_tbl, "AUC Δ% (mean) — grouped bars", "bars_auc_pct_mean.png", "AUC Δ%·s")
+    grouped_bar(amp_tbl, "Amplitude Δ% (mean) — grouped bars", "bars_amplitude_pct_mean_of_effortful.png", "Amplitude Δ%")
+    grouped_bar(auc_tbl, "AUC Δ% (mean) — grouped bars", "bars_auc_pct_mean_of_effortful.png", "AUC Δ%·s")
 
     # Scatter amplitude% vs AUC%
     fig, ax = plt.subplots(figsize=(5,4))
@@ -92,7 +93,7 @@ def main():
                 ax.scatter(row["amplitude_pct"], row["auc_pct"])
                 ax.annotate(f"{loc} / {g}", (row["amplitude_pct"].values[0], row["auc_pct"].values[0]), fontsize=8)
     ax.set_xlabel("Amplitude Δ%"); ax.set_ylabel("AUC Δ%·s"); ax.set_title("Amplitude vs AUC (mean)")
-    fig.tight_layout(); fig.savefig(outdir / "scatter_amp_vs_auc_mean.png", dpi=150); plt.close(fig)
+    fig.tight_layout(); fig.savefig(outdir / "scatter_amp_vs_auc_mean_of_effortful.png", dpi=150); plt.close(fig)
 
     # ------------- B) Per-wavelength (data_0..data_5) before averaging -------------
     ch_rows = m[m["channel"].str.startswith("data_")].copy()
@@ -109,7 +110,7 @@ def main():
             ax.bar(range(len(channels)), sub["amplitude_pct"].values)
             ax.set_xticks(range(len(channels))); ax.set_xticklabels(channels)
             ax.set_ylabel("Amplitude Δ%"); ax.set_title(f"{loc} — {g} (per-channel amplitude Δ%)")
-            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_channel_bars_amplitude.png", dpi=150); plt.close(fig)
+            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_channel_bars_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
     # 2) Radar plots (“spectral fingerprints”) per (location, gulp) for amplitude%
     for loc in locations:
@@ -121,7 +122,7 @@ def main():
             fig = plt.figure(figsize=(4.5,4.5))
             ax = fig.add_subplot(111, polar=True)
             radar_plot(ax, sub["amplitude_pct"].values, channels, f"{loc}\n{g} — amplitude Δ%")
-            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_radar_amplitude.png", dpi=150); plt.close(fig)
+            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_radar_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
     # 3) Heatmap: channels × (location/gulp) for amplitude%
     cols = []
@@ -141,7 +142,7 @@ def main():
         ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=45, ha="right")
         ax.set_title("Per-channel amplitude Δ% — channels × (location/gulp)")
         fig.colorbar(im, ax=ax, shrink=0.8)
-        fig.tight_layout(); fig.savefig(outdir / "heatmap_channels_by_condition_amplitude.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "heatmap_channels_by_condition_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
     # 4) Same as (1–3) but for AUC%
     for loc in locations:
@@ -153,7 +154,7 @@ def main():
             ax.bar(range(len(channels)), sub["auc_pct"].values)
             ax.set_xticks(range(len(channels))); ax.set_xticklabels(channels)
             ax.set_ylabel("AUC Δ%·s"); ax.set_title(f"{loc} — {g} (per-channel AUC Δ%)")
-            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_channel_bars_auc.png", dpi=150); plt.close(fig)
+            fig.tight_layout(); fig.savefig(outdir / f"{loc.replace(' ','_')}_{g.replace(' ','_')}_channel_bars_auc_of_effortful.png", dpi=150); plt.close(fig)
 
     cols_auc = []
     for loc in locations:
@@ -171,7 +172,7 @@ def main():
         ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=45, ha="right")
         ax.set_title("Per-channel AUC Δ%·s — channels × (location/gulp)")
         fig.colorbar(im, ax=ax, shrink=0.8)
-        fig.tight_layout(); fig.savefig(outdir / "heatmap_channels_by_condition_auc.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "heatmap_channels_by_condition_auc_of_effortful.png", dpi=150); plt.close(fig)
 
     # 5) Simple derived spectral features (for quick stats later)
     #    slope across channels (index 0..5) and red/blue ratio
@@ -187,7 +188,7 @@ def main():
             spec.append(dict(location=loc, gulp=g, slope_amppct=slope, red_blue_amppct=red_blue_ratio))
     if spec:
         df_spec = pd.DataFrame(spec)
-        df_spec.to_csv(outdir / "spectral_features_amplitude_pct.csv", index=False)
+        df_spec.to_csv(outdir / "spectral_features_amplitude_pct_of_effortful.csv", index=False)
 
     # ------------- C) PCA / Cosine similarity / Parallel coordinates (Amplitude Δ%) -------------
     # Build matrix X (conditions × channels) using amplitude_pct
@@ -234,7 +235,7 @@ def main():
         ax.set_xlabel(f"PC1 ({explained[0]*100:.1f}%)")
         ax.set_ylabel(f"PC2 ({explained[1]*100:.1f}%)")
         ax.set_title("PCA (Amplitude Δ%)")
-        fig.tight_layout(); fig.savefig(outdir / "pca_scatter_amplitude.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "pca_scatter_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
         # PCA loadings (which wavelengths drive PC1/PC2)
         fig, ax = plt.subplots(figsize=(6,5))
@@ -246,7 +247,7 @@ def main():
             ax.text(loadings[j,0]*scale*1.1, loadings[j,1]*scale*1.1, ch, fontsize=9)
         ax.set_xlabel("PC1 loading"); ax.set_ylabel("PC2 loading")
         ax.set_title("PCA Loadings (Amplitude Δ%)")
-        fig.tight_layout(); fig.savefig(outdir / "pca_loadings_amplitude.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "pca_loadings_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
         # Cosine similarity (shape-only similarity across conditions)
         Xu = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
@@ -257,7 +258,7 @@ def main():
         ax.set_yticks(range(len(labels))); ax.set_yticklabels(labels, fontsize=8)
         ax.set_title("Cosine similarity — spectral shape (Amplitude Δ%)")
         fig.colorbar(im, ax=ax, shrink=0.8)
-        fig.tight_layout(); fig.savefig(outdir / "cosine_similarity_amplitude.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "cosine_similarity_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
         # Parallel coordinates (z-score each condition so shape stands out)
         df_pc = []
@@ -275,7 +276,7 @@ def main():
         ax.set_title("Parallel coordinates (z-scored per condition) — Amplitude Δ%")
         ax.set_ylabel("z-score per condition")
         ax.legend([],[], frameon=False)  # hide cluttered legend
-        fig.tight_layout(); fig.savefig(outdir / "parallel_coords_amplitude.png", dpi=150); plt.close(fig)
+        fig.tight_layout(); fig.savefig(outdir / "parallel_coords_amplitude_of_effortful.png", dpi=150); plt.close(fig)
 
     # (Optional) Repeat for AUC%: copy the block above and replace 'amplitude_pct' with 'auc_pct',
     # and change filenames to '*_auc.png' to produce the AUC versions as well.
