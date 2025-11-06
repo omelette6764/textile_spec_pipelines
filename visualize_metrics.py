@@ -280,6 +280,70 @@ def main():
 
     # (Optional) Repeat for AUC%: copy the block above and replace 'amplitude_pct' with 'auc_pct',
     # and change filenames to '*_auc.png' to produce the AUC versions as well.
+    
+    #below are temporal metrics visualizations, for the time to dip, time to peak, number of humps per trial, and inter-gulp time
+        # ------------- D) Temporal metrics (n_humps, inter-gulp, time-to-peak/dip) -------------
+    temp_metrics = ["n_humps", "mean_inter_gulp_s", "mean_time_to_peak_s", "mean_time_to_dip_s"]
+    available = [c for c in temp_metrics if c in mean_rows.columns]
+    if available:
+        print(f"Temporal metrics found: {available}")
+    else:
+        print("⚠️ No temporal metrics found in CSV.")
+        return
+
+    def heatmap_generic(df, title, fname, fmt=".2f"):
+        fig, ax = plt.subplots(figsize=(6,4))
+        im = ax.imshow(df.values, aspect="auto", cmap="viridis")
+        ax.set_xticks(range(df.shape[1])); ax.set_xticklabels(df.columns, rotation=0)
+        ax.set_yticks(range(df.shape[0])); ax.set_yticklabels(df.index)
+        ax.set_title(title)
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                val = df.iat[i,j]
+                if pd.notna(val):
+                    ax.text(j, i, f"{val:{fmt}}", ha="center", va="center", color="w", fontsize=8)
+        fig.colorbar(im, ax=ax, shrink=0.8)
+        fig.tight_layout()
+        fig.savefig(outdir / fname, dpi=150)
+        plt.close(fig)
+
+    # For each temporal metric, make a heatmap and grouped bar
+    for metric in available:
+        tbl = mean_rows.pivot_table(index="location", columns="gulp", values=metric, aggfunc="mean").reindex(index=locations, columns=gulps)
+        heatmap_generic(tbl, f"{metric} — location × gulp", f"heatmap_{metric}_of_effortful.png")
+
+        # Grouped bar version
+        fig, ax = plt.subplots(figsize=(7,4))
+        x = np.arange(tbl.shape[0])
+        w = 0.25
+        for k, col in enumerate(tbl.columns):
+            ax.bar(x + (k-1)*w, tbl[col].values, width=w, label=col)
+        ax.set_xticks(x); ax.set_xticklabels(tbl.index)
+        ax.set_ylabel(metric.replace("_", " "))
+        ax.set_title(f"{metric} — grouped bars")
+        ax.legend(fontsize=7, ncol=2)
+        fig.tight_layout()
+        fig.savefig(outdir / f"bars_{metric}_of_effortful.png", dpi=150)
+        plt.close(fig)
+
+    # Scatter comparisons: e.g., time_to_peak vs amplitude, inter_gulp vs n_humps
+    fig, axes = plt.subplots(1, 2, figsize=(10,4))
+    if "mean_time_to_peak_s" in mean_rows.columns:
+        axes[0].scatter(mean_rows["mean_time_to_peak_s"], mean_rows["amplitude_pct"], alpha=0.7)
+        axes[0].set_xlabel("Mean time to peak (s)")
+        axes[0].set_ylabel("Amplitude Δ%")
+        axes[0].set_title("Amplitude vs Time to Peak")
+    if "mean_inter_gulp_s" in mean_rows.columns and "n_humps" in mean_rows.columns:
+        axes[1].scatter(mean_rows["n_humps"], mean_rows["mean_inter_gulp_s"], alpha=0.7)
+        axes[1].set_xlabel("Number of gulps")
+        axes[1].set_ylabel("Mean inter-gulp time (s)")
+        axes[1].set_title("Inter-gulp time vs Gulp count")
+    fig.tight_layout()
+    fig.savefig(outdir / "scatter_temporal_relations_of_effortful.png", dpi=150)
+    plt.close(fig)
+
+    m.boxplot(column="mean_time_to_peak_s", by="gulp")
+
 
     print(f"Figures saved to: {outdir.resolve()}")
 
