@@ -48,7 +48,7 @@ def main():
     mean_rows = m[m["channel"]=="mean"].copy()
     locations = ["top middle", "bottom middle","first right","first left", "second right", "second left"]
     #gulps = ["gulp 1","gulp 2","gulp 3"]
-    gulps = ["effortful swallow 1","effortful swallow 2","effortful swallow 3", "effortful swallow 4", "effortful swallow 5"]
+    gulps = ["effortful swallow 1","effortful swallow 2","effortful swallow 3", "effortful swallow 4", "effortful swallow 5", "masako maneuver 1", "masako maneuver 2", "masako maneuver 3", "masako maneuver 4", "masako maneuver 5", "masako maneuver 6", "masako maneuver 7", "masako maneuver 8", "masako maneuver 9", "masako maneuver 10"]
 
     # Heatmaps
     amp_tbl = mean_rows.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean").reindex(index=locations, columns=gulps)
