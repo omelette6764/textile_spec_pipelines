@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pandas.plotting import parallel_coordinates
+import os
+import seaborn as sns
 
 
 def ensure_dir(p: Path):
@@ -343,6 +345,74 @@ def main():
     plt.close(fig)
 
     m.boxplot(column="mean_time_to_peak_s", by="gulp")
+
+    ###comparison of metrics among each task, i.e. masako, effortful, and water trials
+
+    # === Load and clean data ===
+    df = pd.read_csv("metrics_pct_of_effortful.csv")
+
+    # Remove mean rows
+    df = df[~df["gulp"].str.contains("mean", case=False, na=False)]
+
+    # Classify trials by task type
+    def classify_trial(name):
+        name = name.lower()
+        if "effort" in name:
+            return "Effortful"
+        elif "masako" in name:
+            return "Masako"
+        elif "water" in name:
+            return "Water"
+        else:
+            return "Other"
+
+    df["TaskType"] = df["gulp"].apply(classify_trial)
+
+    # Metrics to visualize
+    metrics = ["n_humps", "mean_intergulp_time", "mean_time_to_peak", "mean_time_to_dip"]
+
+    # Output folder setup
+    output_dir = "figures_task_comparisons"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # === Generate plots ===
+    sns.set(style="whitegrid", font_scale=1.2)
+
+    for task in df["TaskType"].unique():
+        if task == "Other":
+            continue
+        
+        df_task = df[df["TaskType"] == task]
+        if df_task.empty:
+            continue
+
+        task_dir = os.path.join(output_dir, task)
+        os.makedirs(task_dir, exist_ok=True)
+
+        for metric in metrics:
+            if metric not in df_task.columns:
+                print(f"⚠️ Metric {metric} not found in file — skipping")
+                continue
+
+            # --- Boxplot ---
+            plt.figure(figsize=(8, 6))
+            sns.boxplot(data=df_task, x="gulp", y=metric, color="skyblue")
+            plt.title(f"{task} - {metric} (Boxplot)")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.savefig(os.path.join(task_dir, f"{metric}_{task}_boxplot.png"), dpi=300)
+            plt.close()
+
+            # --- Bar plot (mean ± SEM) ---
+            plt.figure(figsize=(8, 6))
+            sns.barplot(data=df_task, x="gulp", y=metric, ci="sd", palette="viridis")
+            plt.title(f"{task} - {metric} (Mean ± SD)")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.savefig(os.path.join(task_dir, f"{metric}_{task}_barplot.png"), dpi=300)
+            plt.close()
+
+    print("✅ Task comparison plots generated successfully!")
 
 
     print(f"Figures saved to: {outdir.resolve()}")
