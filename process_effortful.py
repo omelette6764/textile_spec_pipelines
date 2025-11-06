@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import pywt
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+
 
 def monotonic_local_time(series: pd.Series):
     """Make a monotonic local time axis from a numeric or datetime timestamp; fallback to sample index."""
@@ -76,25 +78,67 @@ def seg_metrics(y_pct, dt=1.0):
     n = len(y_pct)
     if n == 0:
         return dict(baseline_pct=np.nan, amplitude_pct=np.nan, t_peak_idx=np.nan,
-                    auc_pct=np.nan, fwhm_samples=np.nan, fwhm_seconds=np.nan)
+                    auc_pct=np.nan, fwhm_samples=np.nan, fwhm_seconds=np.nan, n_humps=np.nan, mean_inter_gulp_s=np.nan,
+                    mean_time_to_peak_s=np.nan, mean_time_to_dip_s=np.nan)
+    
+    #baseline and amplitude calculations
     b_len = max(20, int(0.1*n))
     baseline_pct = float(np.nanmedian(y_pct[:b_len]))
     yb = y_pct - baseline_pct
-    amplitude_pct = float(np.nanmax(yb))
-    t_peak_idx = int(np.nanargmax(yb))
+
+    #find local maxima (the humps per gulp)
+    peaks, _ = find_peaks(yb, height=np.nanstd(yb)*0.5, distance=max(3, int(0.3/dt)))
+    troughs, _ = find_peaks(-yb, distance=max(3, int(0.3/dt)))
+
+    #amplitude and AUC overall?
+    amplitude_pct = float(np.nanmax(yb)) if np.isfinite(np.nanmax(yb)) else np.nan
+    t_peak_idx = int(np.nanargmax(yb)) if np.isfinite(amplitude_pct) else np.nan
     auc_pct = float(np.nansum(np.maximum(yb, 0.0))) * dt  # %·s if dt in seconds
+
+    #FWHM overall calculation?
     if np.isfinite(amplitude_pct) and amplitude_pct > 0:
         half = amplitude_pct/2.0
         idx = np.where(yb >= half)[0]
         fwhm_samples = float(idx[-1] - idx[0] + 1) if len(idx) >= 2 else np.nan
     else:
         fwhm_samples = np.nan
+
+    #per hump timing metrics below
+    n_humps = len(peaks)
+    inter_gulp_times = []
+    time_to_peak = []
+    time_to_dip = []
+
+    if n_humps > 0:
+        # find preceding troughs for each peak
+        for i, pk in enumerate(peaks):
+            # start of hump = last trough before pk
+            prev_troughs = troughs[troughs < pk]
+            next_troughs = troughs[troughs > pk]
+            t_start = prev_troughs[-1] if len(prev_troughs) else 0
+            t_end = next_troughs[0] if len(next_troughs) else n - 1
+            time_to_peak.append((pk - t_start) * dt)
+            time_to_dip.append((t_end - pk) * dt)
+        if len(peaks) >= 2:
+            inter_gulp_times = np.diff(peaks) * dt
+
+    mean_inter_gulp_s = np.nanmean(inter_gulp_times) if len(inter_gulp_times) else np.nan
+    mean_time_to_peak_s = np.nanmean(time_to_peak) if len(time_to_peak) else np.nan
+    mean_time_to_dip_s = np.nanmean(time_to_dip) if len(time_to_dip) else np.nan
+
     return dict(baseline_pct=baseline_pct,
                 amplitude_pct=amplitude_pct,
                 t_peak_idx=t_peak_idx,
                 auc_pct=auc_pct,
                 fwhm_samples=fwhm_samples,
-                fwhm_seconds=(fwhm_samples*dt if np.isfinite(fwhm_samples) else np.nan))
+                fwhm_seconds=(fwhm_samples*dt if np.isfinite(fwhm_samples) else np.nan),
+                n_humps=n_humps,
+                mean_inter_gulp_s=mean_inter_gulp_s,
+                mean_time_to_peak_s=mean_time_to_peak_s,
+                mean_time_to_dip_s=mean_time_to_dip_s                
+     )
+
+    
 
 def main():
     ap = argparse.ArgumentParser()
@@ -125,11 +169,25 @@ def main():
         if t.startswith("second left"): return "second left"
         if t.startswith("second right"): return "second right"
         return t
+    ##def norm_gulp(x):
+        #t = str(x).strip().lower()
+      #  if "effortful swallow" not in t: return ""
+      #  m = re.search(r"effortful swallow\s*([12345])", t)
+      #  return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
+
     def norm_gulp(x):
         t = str(x).strip().lower()
-        if "Effortful swallow" not in t: return ""
-        m = re.search(r"Effortful swallow\s*([12345])", t)
-        return f"Effortful swallow {m.group(1)}" if m else "Effortful swallow"
+        if "effortful swallow" in t:
+            m = re.search(r"effortful swallow\s*([0-9]+)", t)
+            return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
+        if "masako maneuver" in t:
+            m = re.search(r"masako maneuver\s*([0-9]+)", t)
+            return f"masako maneuver {m.group(1)}" if m else "masako maneuver"
+        if "3oz water" in t:
+            m = re.search(r"3oz water\s*\(?([0-9]+)\)?", t)
+            return f"3oz water ({m.group(1)})" if m else "3oz water"
+        return ""
+    
 
     df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
     df["_gulp"] = df["Activity"].map(norm_gulp) if "Activity" in df.columns else ""
@@ -152,7 +210,18 @@ def main():
     # === Compute per-segment metrics (mean across channels + channel-wise) ===
     rows = []
     locations = [v for v in ["top middle", "bottom middle","first right","first left", "second right", "second left"] if (df["_location"]==v).any()]
-    gulps = [v for v in ["Effortful swallow 1","Effortful swallow 2","Effortful swallow 3", "Effortful swallow 4", "Effortful swallow 5"] if (df["_gulp"]==v).any()]
+    ##gulps = [v for v in ["Effortful swallow 1","Effortful swallow 2","Effortful swallow 3", "Effortful swallow 4", "Effortful swallow 5"] if (df["_gulp"]==v).any()]
+    # --- Build gulp lists for all three task types ---
+    effortful = [f"effortful swallow {i}" for i in range(1, 6)]
+    masako = [f"masako maneuver {i}" for i in range(1, 11)]
+    water = [f"3oz water ({i})" for i in range(1, 4)]
+
+    gulps = []
+    for pattern_list in [effortful, masako, water]:
+        gulps.extend([g for g in pattern_list if (df["Activity"].str.lower() == g.lower()).any()])
+
+    print(f"Detected gulps: {gulps}")
+
 
     for loc in locations:
         for g in gulps:
@@ -163,30 +232,31 @@ def main():
             ymean = np.nanmean(Y, axis=1)
             ymean_pct, _ = normalize_percent(ymean)
             m = seg_metrics(ymean_pct, dt=dt)
+
             rows.append(dict(location=loc, gulp=g, channel="mean", n=len(seg), **m))
             # channel-wise too
             for i, cname in enumerate(channel_cols):
                 ypc, _ = normalize_percent(Y[:, i])
                 m = seg_metrics(ypc, dt=dt)
                 rows.append(dict(location=loc, gulp=g, channel=cname, n=len(seg), **m))
+    
+    if not rows:
+        print("⚠️ No rows to compute — likely no matching gulps/locations.")
+        return
 
     metrics = pd.DataFrame(rows)
     metrics.to_csv(outdir / "metrics_pct_of_effortful.csv", index=False)
 
-    print("metrics columns:", metrics.columns.tolist())
-    print("metrics shape:", metrics.shape)
-    print("unique channels:", metrics["channel"].unique() if "channel" in metrics.columns else "no channel column")
-    print("locations:", locations)
-    print("gulps:", gulps)
-
-
-    # === Pivot tables (what you asked to compare) ===
-    mean_only = metrics[metrics["channel"]=="mean"].copy()
-    amp_tbl = mean_only.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean")
-    auc_tbl = mean_only.pivot_table(index="location", columns="gulp", values="auc_pct", aggfunc="mean")
-    amp_tbl.to_csv(outdir / "pivot_mean_amplitude_pct_by_loc_gulp_of_effortful.csv")
-    auc_tbl.to_csv(outdir / "pivot_mean_auc_pct_by_loc_gulp_of_effortful.csv")
-
+    if metrics.empty:
+        print("⚠️ No metrics computed — likely no matching gulps or locations. Skipping pivot tables.")
+        return  # or 'sys.exit(0)' to cleanly stop the script
+    else:    # === Pivot tables (what you asked to compare) ===
+        mean_only = metrics[metrics["channel"]=="mean"].copy()
+        amp_tbl = mean_only.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean")
+        auc_tbl = mean_only.pivot_table(index="location", columns="gulp", values="auc_pct", aggfunc="mean")
+        amp_tbl.to_csv(outdir / "pivot_mean_amplitude_pct_by_loc_gulp_of_effortful.csv")
+        auc_tbl.to_csv(outdir / "pivot_mean_auc_pct_by_loc_gulp_of_effortful.csv")
+    
     # === Quick overlays (normalized mean) ===
     def time_axis_for(seg):
         if time_col is None: return np.arange(len(seg))
@@ -282,6 +352,10 @@ def main():
                 plt.close(fig)
 
     print("Done. Outputs (of effortful) in:", outdir.as_posix())
+
+#plotting the peaks as a check
+    peaks, _ = find_peaks(ymean_pct, height=np.std(ymean_pct)*0.5)
+    plt.plot(t[peaks], ymean_pct[peaks], "rx", label="peaks")
 
 if __name__ == "__main__":
     main()
