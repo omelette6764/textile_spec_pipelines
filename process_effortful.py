@@ -87,9 +87,24 @@ def seg_metrics(y_pct, dt=1.0):
     baseline_pct = float(np.nanmedian(y_pct[:b_len]))
     yb = y_pct - baseline_pct
 
-    #find local maxima (the humps per gulp)
-    peaks, _ = find_peaks(yb, height=np.nanstd(yb)*0.5, distance=max(3, int(0.3/dt)))
-    troughs, _ = find_peaks(-yb, distance=max(3, int(0.3/dt)))
+    ##find local maxima (the humps per gulp)   vv problematic, too sensitive to noise and small maxima/minima vv
+    #peaks, _ = find_peaks(yb, height=np.nanstd(yb)*0.5, distance=max(3, int(0.3/dt)))
+    #troughs, _ = find_peaks(-yb, distance=max(3, int(0.3/dt)))
+
+    std = np.nanstd(yb)
+    #Updated "hump" detection using higher thresholds to avoid noise sensitivity and also minimum time between gulps
+    peaks, props = find_peaks(
+        yb,
+        height=np.nanstd(yb)*1.0,            # higher threshold
+        prominence=np.nanstd(yb)*2.0,        # require strong hump
+        distance=int(0.6/dt)                 # gulps spaced ~0.6s apart minimum
+    )
+    troughs, _ = find_peaks(
+        -yb, 
+        prominence=np.nanstd(yb)*1.0, 
+        distance=int(0.6/dt)
+    )
+
 
     #amplitude and AUC overall?
     amplitude_pct = float(np.nanmax(yb)) if np.isfinite(np.nanmax(yb)) else np.nan
