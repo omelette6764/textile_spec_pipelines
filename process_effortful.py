@@ -1,6 +1,6 @@
 # process_effortful.py
 # Usage:
-#   pip install pandas numpy scipy pywt matplotlib
+#   pip install pandas numpy scipy pywavelets matplotlib
 #   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_effortful
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
