@@ -37,7 +37,8 @@ def monotonic_local_time(series: pd.Series):
             return (dt - dt.iloc[0]).dt.total_seconds().to_numpy()
     return None
 
-def swt_denoise_array(X, wavelet="db2", level=3, zero_levels=(1,2,3)):
+
+def swt_denoise_array(X, wavelet="db2", level=3, zero_levels=(1, 2, 3)):
     """Apply SWT denoising to a (T, C) array and return (T, C)."""
     X = np.asarray(X, float)
     T, C = X.shape
@@ -63,98 +64,126 @@ def swt_denoise_array(X, wavelet="db2", level=3, zero_levels=(1,2,3)):
         Y[:, c] = xc_hat
     return Y
 
+
 def normalize_percent(y):
     """Δ% = 100*(y - baseline)/baseline, baseline = median of first 10% or 20 samples."""
     n = len(y)
     if n == 0:
         return np.full(0, np.nan), np.nan
-    b_len = max(20, int(0.1*n))
+    b_len = max(20, int(0.1 * n))
     b = float(np.nanmedian(y[:b_len]))
     if not np.isfinite(b) or b == 0:
         return np.full_like(y, np.nan, dtype=float), b
     return (y - b) / b * 100.0, b
 
-def seg_metrics(y_pct, dt=1.0):
-    """On normalized (Δ%) signal: baseline%, amplitude%, t_peak_idx, AUC% (≥0), FWHM (samples & seconds)."""
+
+# === CHANGED: seg_metrics now supports mode='peaks' or 'troughs' ===
+def seg_metrics(y_pct, dt=1.0, mode="peaks"):
+    """
+    On normalized (Δ%) signal:
+      - baseline%, amplitude%, t_peak_idx, AUC% (≥0), FWHM (samples & seconds)
+      - n_humps = number of events (peaks or troughs depending on mode)
+      - mean_inter_gulp_s, mean_time_to_peak_s, mean_time_to_dip_s
+
+    mode:
+      'peaks'   -> detect upward humps (e.g., 3oz water trials)
+      'troughs' -> detect downward gulps (e.g., effortful swallow, masako)
+    """
     n = len(y_pct)
     if n == 0:
-        return dict(baseline_pct=np.nan, amplitude_pct=np.nan, t_peak_idx=np.nan,
-                    auc_pct=np.nan, fwhm_samples=np.nan, fwhm_seconds=np.nan, n_humps=np.nan, mean_inter_gulp_s=np.nan,
-                    mean_time_to_peak_s=np.nan, mean_time_to_dip_s=np.nan)
-    
-    #baseline and amplitude calculations
-    b_len = max(20, int(0.1*n))
+        return dict(
+            baseline_pct=np.nan,
+            amplitude_pct=np.nan,
+            t_peak_idx=np.nan,
+            auc_pct=np.nan,
+            fwhm_samples=np.nan,
+            fwhm_seconds=np.nan,
+            n_humps=np.nan,
+            mean_inter_gulp_s=np.nan,
+            mean_time_to_peak_s=np.nan,
+            mean_time_to_dip_s=np.nan,
+        )
+
+    # --- baseline and amplitude calculations ---
+    b_len = max(20, int(0.1 * n))
     baseline_pct = float(np.nanmedian(y_pct[:b_len]))
     yb = y_pct - baseline_pct
 
-    ##find local maxima (the humps per gulp)   vv problematic, too sensitive to noise and small maxima/minima vv
-    #peaks, _ = find_peaks(yb, height=np.nanstd(yb)*0.5, distance=max(3, int(0.3/dt)))
-    #troughs, _ = find_peaks(-yb, distance=max(3, int(0.3/dt)))
+    std = np.nanstd(yb) if np.isfinite(np.nanstd(yb)) else 0.0
 
-    std = np.nanstd(yb)
-    #Updated "hump" detection using higher thresholds to avoid noise sensitivity and also minimum time between gulps
-    peaks, props = find_peaks(
-        yb,
-        height=np.nanstd(yb)*1.0,            # higher threshold
-        prominence=np.nanstd(yb)*2.0,        # require strong hump
-        distance=int(0.6/dt)                 # gulps spaced ~0.6s apart minimum
-    )
+    # --- CHANGED: event detection depends on mode ---
+    if mode == "troughs":
+        # Use troughs as events (for masako/effortful swallows)
+        events, props = find_peaks(
+            -yb,
+            height=std * 1.0,
+            prominence=std * 2.0,
+            distance=int(0.6 / dt) if dt > 0 else 3,
+        )
+    else:
+        # Default: peaks as events (3oz water, or anything unspecified)
+        events, props = find_peaks(
+            yb,
+            height=std * 1.0,
+            prominence=std * 2.0,
+            distance=int(0.6 / dt) if dt > 0 else 3,
+        )
+
+    # We still detect troughs for boundary timing (even in peak mode)
     troughs, _ = find_peaks(
-        -yb, 
-        prominence=np.nanstd(yb)*1.0, 
-        distance=int(0.6/dt)
+        -yb,
+        prominence=std * 1.0 if std > 0 else 0.0,
+        distance=int(0.6 / dt) if dt > 0 else 3,
     )
 
-
-    #amplitude and AUC overall?
+    # --- amplitude and AUC overall (same definition as before) ---
     amplitude_pct = float(np.nanmax(yb)) if np.isfinite(np.nanmax(yb)) else np.nan
     t_peak_idx = int(np.nanargmax(yb)) if np.isfinite(amplitude_pct) else np.nan
     auc_pct = float(np.nansum(np.maximum(yb, 0.0))) * dt  # %·s if dt in seconds
 
-    #FWHM overall calculation?
+    # --- FWHM overall calculation (same as before) ---
     if np.isfinite(amplitude_pct) and amplitude_pct > 0:
-        half = amplitude_pct/2.0
+        half = amplitude_pct / 2.0
         idx = np.where(yb >= half)[0]
         fwhm_samples = float(idx[-1] - idx[0] + 1) if len(idx) >= 2 else np.nan
     else:
         fwhm_samples = np.nan
 
-    #per hump timing metrics below
-    n_humps = len(peaks)
+    # --- per-event timing metrics ---
+    n_humps = len(events)
     inter_gulp_times = []
     time_to_peak = []
     time_to_dip = []
 
     if n_humps > 0:
-        # find preceding troughs for each peak
-        for i, pk in enumerate(peaks):
-            # start of hump = last trough before pk
-            prev_troughs = troughs[troughs < pk]
-            next_troughs = troughs[troughs > pk]
-            t_start = prev_troughs[-1] if len(prev_troughs) else 0
-            t_end = next_troughs[0] if len(next_troughs) else n - 1
-            time_to_peak.append((pk - t_start) * dt)
-            time_to_dip.append((t_end - pk) * dt)
-        if len(peaks) >= 2:
-            inter_gulp_times = np.diff(peaks) * dt
+        for ev in events:
+            # start of hump = last trough before the event
+            prev_tr = troughs[troughs < ev]
+            next_tr = troughs[troughs > ev]
+            t_start = prev_tr[-1] if len(prev_tr) else 0
+            t_end = next_tr[0] if len(next_tr) else n - 1
+            time_to_peak.append((ev - t_start) * dt)
+            time_to_dip.append((t_end - ev) * dt)
+        if len(events) >= 2:
+            inter_gulp_times = np.diff(events) * dt
 
     mean_inter_gulp_s = np.nanmean(inter_gulp_times) if len(inter_gulp_times) else np.nan
     mean_time_to_peak_s = np.nanmean(time_to_peak) if len(time_to_peak) else np.nan
     mean_time_to_dip_s = np.nanmean(time_to_dip) if len(time_to_dip) else np.nan
 
-    return dict(baseline_pct=baseline_pct,
-                amplitude_pct=amplitude_pct,
-                t_peak_idx=t_peak_idx,
-                auc_pct=auc_pct,
-                fwhm_samples=fwhm_samples,
-                fwhm_seconds=(fwhm_samples*dt if np.isfinite(fwhm_samples) else np.nan),
-                n_humps=n_humps,
-                mean_inter_gulp_s=mean_inter_gulp_s,
-                mean_time_to_peak_s=mean_time_to_peak_s,
-                mean_time_to_dip_s=mean_time_to_dip_s                
-     )
+    return dict(
+        baseline_pct=baseline_pct,
+        amplitude_pct=amplitude_pct,
+        t_peak_idx=t_peak_idx,
+        auc_pct=auc_pct,
+        fwhm_samples=fwhm_samples,
+        fwhm_seconds=(fwhm_samples * dt if np.isfinite(fwhm_samples) else np.nan),
+        n_humps=n_humps,
+        mean_inter_gulp_s=mean_inter_gulp_s,
+        mean_time_to_peak_s=mean_time_to_peak_s,
+        mean_time_to_dip_s=mean_time_to_dip_s,
+    )
 
-    
 
 def main():
     ap = argparse.ArgumentParser()
@@ -165,31 +194,42 @@ def main():
     ap.add_argument("--level", type=int, default=3)
     ap.add_argument("--zero-levels", default="1,2,3", help="Comma list, e.g. 1,2,3 or 2,3")
     ap.add_argument("--sample-rate", type=float, default=30.0, help="Hz (for AUC/FWHM in seconds)")
-    ap.add_argument("--plot-channels", action="store_true",
-                help="Generate per-(location,gulp) plots with all 6 channels (uses denoised signals if --denoise is set)")
-    ap.add_argument("--plot-channels-mode", default="raw", choices=["raw","norm"],
-                help="Plot 'raw' filtered signals or 'norm' (Δ%% from baseline) per channel")
+    ap.add_argument(
+        "--plot-channels",
+        action="store_true",
+        help="Generate per-(location,gulp) plots with all 6 channels (uses denoised signals if --denoise is set)",
+    )
+    ap.add_argument(
+        "--plot-channels-mode",
+        default="raw",
+        choices=["raw", "norm"],
+        help="Plot 'raw' filtered signals or 'norm' (Δ%% from baseline) per channel",
+    )
+    # (Optional) debug toggle for event overlays – you can set this True inside code if needed
+    # ap.add_argument("--debug-events", action="store_true", help="Overlay detected events on mean traces")
 
     args = ap.parse_args()
 
-    outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(args.csv, low_memory=False).ffill()
 
     # Detect labels
     def norm_loc(x):
         t = str(x).strip().lower()
-        if t.startswith("First right"): return "first right"
-        if t.startswith("first left"):  return "first left"
-        if "top" in t and "middle" in t and "(actual)" in t: return "top middle"
-        if "bottom" in t and "middle" in t: return "bottom middle"
-        if t.startswith("second left"): return "second left"
-        if t.startswith("second right"): return "second right"
+        if t.startswith("first right"):
+            return "first right"
+        if t.startswith("first left"):
+            return "first left"
+        if "top" in t and "middle" in t and "(actual)" in t:
+            return "top middle"
+        if "bottom" in t and "middle" in t:
+            return "bottom middle"
+        if t.startswith("second left"):
+            return "second left"
+        if t.startswith("second right"):
+            return "second right"
         return t
-    ##def norm_gulp(x):
-        #t = str(x).strip().lower()
-      #  if "effortful swallow" not in t: return ""
-      #  m = re.search(r"effortful swallow\s*([12345])", t)
-      #  return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
 
     def norm_gulp(x):
         t = str(x).strip().lower()
@@ -203,13 +243,16 @@ def main():
             m = re.search(r"3oz water\s*\(?([0-9]+)\)?", t)
             return f"3oz water ({m.group(1)})" if m else "3oz water"
         return ""
-    
 
     df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
     df["_gulp"] = df["Activity"].map(norm_gulp) if "Activity" in df.columns else ""
 
     # Choose time and channel columns
-    time_col = "notificationTimestamp" if "notificationTimestamp" in df.columns else ("timestamp" if "timestamp" in df.columns else None)
+    time_col = (
+        "notificationTimestamp"
+        if "notificationTimestamp" in df.columns
+        else ("timestamp" if "timestamp" in df.columns else None)
+    )
     channel_cols = [c for c in df.columns if c.startswith("data_")]
     X = df[channel_cols].to_numpy(dtype=float)
 
@@ -221,12 +264,28 @@ def main():
         df.to_csv(outdir / "denoised_signals_of_effortful.csv", index=False)
 
     # Build monotonic local time per segment when plotting; metrics use dt=1/fs
-    fs = float(args.sample_rate); dt = 1.0/fs
+    fs = float(args.sample_rate)
+    dt = 1.0 / fs
+
+    # Helper: pick mode based on gulp label
+    # === CHANGED: this is how we choose peaks vs troughs ===
+    def gulp_mode(gname: str) -> str:
+        gl = str(gname).lower()
+        if "3oz water" in gl:
+            return "peaks"   # count humps
+        if "effortful swallow" in gl or "masako maneuver" in gl:
+            return "troughs" # count downward gulps
+        # Fallback: treat as peaks
+        return "peaks"
 
     # === Compute per-segment metrics (mean across channels + channel-wise) ===
     rows = []
-    locations = [v for v in ["top middle", "bottom middle","first right","first left", "second right", "second left"] if (df["_location"]==v).any()]
-    ##gulps = [v for v in ["Effortful swallow 1","Effortful swallow 2","Effortful swallow 3", "Effortful swallow 4", "Effortful swallow 5"] if (df["_gulp"]==v).any()]
+    locations = [
+        v
+        for v in ["top middle", "bottom middle", "first right", "first left", "second right", "second left"]
+        if (df["_location"] == v).any()
+    ]
+
     # --- Build gulp lists for all three task types ---
     effortful = [f"effortful swallow {i}" for i in range(1, 6)]
     masako = [f"masako maneuver {i}" for i in range(1, 11)]
@@ -238,32 +297,34 @@ def main():
 
     print(f"Detected gulps: {gulps}")
 
-
     for loc in locations:
         for g in gulps:
-            seg = df[(df["_location"]==loc) & (df["_gulp"]==g)]
+            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
             if len(seg) < 5:
                 continue
+
+            mode = gulp_mode(g)  # === CHANGED: choose peaks vs troughs here ===
+
             Y = seg[channel_cols].to_numpy(float)
             ymean = np.nanmean(Y, axis=1)
             ymean_pct, _ = normalize_percent(ymean)
-            m = seg_metrics(ymean_pct, dt=dt)
+            m = seg_metrics(ymean_pct, dt=dt, mode=mode)
 
-            rows.append(dict(location=loc, gulp=g, channel="mean", n=len(seg), **m))
+            rows.append(dict(location=loc, gulp=g, channel="mean", n=len(seg), mode=mode, **m))
+
             # channel-wise too
             for i, cname in enumerate(channel_cols):
                 ypc, _ = normalize_percent(Y[:, i])
-                m = seg_metrics(ypc, dt=dt)
-                rows.append(dict(location=loc, gulp=g, channel=cname, n=len(seg), **m))
-    
+                m_ch = seg_metrics(ypc, dt=dt, mode=mode)
+                rows.append(dict(location=loc, gulp=g, channel=cname, n=len(seg), mode=mode, **m_ch))
+
     if not rows:
         print("⚠️ No rows to compute — likely no matching gulps/locations.")
         return
 
     metrics = pd.DataFrame(rows)
-    #metrics.to_csv(outdir / "metrics_pct_of_effortful.csv", index=False)
 
-    #gives me a warning if my file is still open/can't be accessed
+    # gives me a warning if my file is still open/can't be accessed
     csv_path = outdir / "metrics_pct_of_effortful.csv"
     for _ in range(3):
         try:
@@ -275,69 +336,80 @@ def main():
     else:
         print(f"❌ Could not write {csv_path}, file may be locked by another program.")
 
-
     if metrics.empty:
         print("⚠️ No metrics computed — likely no matching gulps or locations. Skipping pivot tables.")
-        return  # or 'sys.exit(0)' to cleanly stop the script
-    else:    # === Pivot tables (what you asked to compare) ===
-        mean_only = metrics[metrics["channel"]=="mean"].copy()
+        return
+    else:
+        # === Pivot tables (what you asked to compare) ===
+        mean_only = metrics[metrics["channel"] == "mean"].copy()
         amp_tbl = mean_only.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean")
         auc_tbl = mean_only.pivot_table(index="location", columns="gulp", values="auc_pct", aggfunc="mean")
         amp_tbl.to_csv(outdir / "pivot_mean_amplitude_pct_by_loc_gulp_of_effortful.csv")
         auc_tbl.to_csv(outdir / "pivot_mean_auc_pct_by_loc_gulp_of_effortful.csv")
-    
+
     # === Quick overlays (normalized mean) ===
     def time_axis_for(seg):
-        if time_col is None: return np.arange(len(seg))
+        if time_col is None:
+            return np.arange(len(seg))
         t = monotonic_local_time(seg[time_col])
         return t if t is not None else np.arange(len(seg))
 
     # per location: overlay gulps
     for loc in locations:
-        plt.figure(figsize=(10,4)); any_plot=False
+        plt.figure(figsize=(10, 4))
+        any_plot = False
         for g in gulps:
-            seg = df[(df["_location"]==loc) & (df["_gulp"]==g)]
-            if len(seg) < 5: continue
+            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+            if len(seg) < 5:
+                continue
             t = time_axis_for(seg)
             Y = seg[channel_cols].to_numpy(float)
             ymean = np.nanmean(Y, axis=1)
             ypc, _ = normalize_percent(ymean)
-            plt.plot(t, ypc, label=g); any_plot=True
+            plt.plot(t, ypc, label=g)
+            any_plot = True
         if any_plot:
-            plt.title(f"{loc} — gulps overlay (Δ% from baseline)"); plt.xlabel("time (a.u.)"); plt.ylabel("Δ%")
-            plt.legend(); plt.tight_layout()
-            plt.savefig(outdir / f"{loc.replace(' ','_')}_gulps_overlay_norm_of_effortful.png", dpi=150); plt.close()
+            plt.title(f"{loc} — gulps overlay (Δ% from baseline)")
+            plt.xlabel("time (a.u.)")
+            plt.ylabel("Δ%")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_norm_of_effortful.png", dpi=150)
+            plt.close()
 
         # per gulp: overlay locations
         for g in gulps:
-            plt.figure(figsize=(10,4)); any_plot=False
-            for loc in locations:
-                seg = df[(df["_location"]==loc) & (df["_gulp"]==g)]
-                if len(seg) < 5: continue
+            plt.figure(figsize=(10, 4))
+            any_plot = False
+            for loc2 in locations:
+                seg = df[(df["_location"] == loc2) & (df["_gulp"] == g)]
+                if len(seg) < 5:
+                    continue
                 t = time_axis_for(seg)
                 Y = seg[channel_cols].to_numpy(float)
                 ymean = np.nanmean(Y, axis=1)
                 ypc, _ = normalize_percent(ymean)
-                plt.plot(t, ypc, label=loc); any_plot=True
+                plt.plot(t, ypc, label=loc2)
+                any_plot = True
             if any_plot:
-                plt.title(f"{g} — locations overlay (Δ% from baseline)"); plt.xlabel("time (a.u.)"); plt.ylabel("Δ%")
-                plt.legend(); plt.tight_layout()
-                plt.savefig(outdir / f"{g.replace(' ','_')}_locations_overlay_norm_of_effortful.png", dpi=150); plt.close()
-        # === NEW: Per-(location, gulp) plots showing all 6 channels ===
-    # Uses SWT-filtered signals if you ran with --denoise (because df[channel_cols] was overwritten)
+                plt.title(f"{g} — locations overlay (Δ% from baseline)")
+                plt.xlabel("time (a.u.)")
+                plt.ylabel("Δ%")
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(outdir / f"{g.replace(' ', '_')}_locations_overlay_norm_of_effortful.png", dpi=150)
+                plt.close()
 
+    # === NEW-ish: Per-(location, gulp) plots showing all 6 channels ===
     def slug(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
 
-    # Reuse the same location/gulp sets and channel list already computed above
     channel_cols = [c for c in df.columns if c.startswith("data_")]
 
-    # Helper to get a time axis (reuses your earlier helper if present)
     def _time_axis_for(seg):
         try:
-            return time_axis_for(seg)  # you defined this earlier in the script
+            return time_axis_for(seg)
         except NameError:
-            # Fallback: monotonic index if helper not available
             return np.arange(len(seg), dtype=float)
 
     if args.plot_channels:
@@ -356,18 +428,20 @@ def main():
                 fig, ax = plt.subplots(figsize=(10, 4))
 
                 if args.plot_channels_mode == "norm":
-                    # Δ% normalization per channel (same baseline rule you use elsewhere)
                     for i, cname in enumerate(channel_cols):
                         y = Y[:, i]
                         n = len(y)
                         b_len = max(20, int(0.1 * n))
                         b = float(np.nanmedian(y[:b_len])) if n > 0 else np.nan
-                        ypc = np.full_like(y, np.nan, dtype=float) if (not np.isfinite(b) or b == 0) else (y - b) / b * 100.0
+                        ypc = (
+                            np.full_like(y, np.nan, dtype=float)
+                            if (not np.isfinite(b) or b == 0)
+                            else (y - b) / b * 100.0
+                        )
                         ax.plot(t, ypc, label=cname)
                     ax.set_ylabel("Δ% from baseline")
                     suffix = "norm_of_effortful"
                 else:
-                    # Raw filtered units (after SWT if --denoise)
                     for i, cname in enumerate(channel_cols):
                         ax.plot(t, Y[:, i], label=cname)
                     ax.set_ylabel("Signal (a.u.)")
@@ -377,14 +451,13 @@ def main():
                 ax.set_xlabel("Time (a.u.)")
                 ax.legend(ncol=3, fontsize=8)
                 fig.tight_layout()
-                fig.savefig(chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}_of_effortful.png", dpi=150)
+                fig.savefig(
+                    chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}_of_effortful.png", dpi=150
+                )
                 plt.close(fig)
 
     print("Done. Outputs (of effortful) in:", outdir.as_posix())
 
-#plotting the peaks as a check
-    peaks, _ = find_peaks(ymean_pct, height=np.std(ymean_pct)*0.5)
-    plt.plot(t[peaks], ymean_pct[peaks], "rx", label="peaks")
 
 if __name__ == "__main__":
     main()
