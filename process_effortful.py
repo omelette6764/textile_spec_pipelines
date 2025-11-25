@@ -3,7 +3,7 @@
 #   pip install pandas numpy scipy pywavelets matplotlib
 #   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_effortful
 #   python process_effortful.py --csv "BTVIZ_2025-11-05_bm_fr_effortf_and_masako_no_head_tilt.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_bm_fr_effortf_and_masako_no_head_tilt
-
+#   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_TEST_effortful_after_modifying_for_no_head_tilting_file
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
@@ -215,7 +215,21 @@ def main():
 
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
-    df = pd.read_csv(args.csv, low_memory=False).ffill()
+    #df = pd.read_csv(args.csv, low_memory=False).ffill()
+    df = pd.read_csv(args.csv, low_memory=False)
+
+    # Normalize whitespace blanks
+    df["Activity"] = df["Activity"].astype(str).str.strip()
+    df["Environment"] = df["Environment"].astype(str).str.strip()
+
+    df["Activity"] = df["Activity"].replace("", np.nan)
+    df["Environment"] = df["Environment"].replace("", np.nan)
+
+    # Only ffill data columns, NOT Activity/Environment
+    data_cols = [c for c in df.columns if c.startswith('data_')]
+    df[data_cols] = df[data_cols].ffill()
+
+
 
     # Detect labels
     def norm_loc(x):
@@ -263,7 +277,7 @@ def main():
             return "effortful swallow"
         if "masako" in t:
             return "masako maneuver"
-        if ("3oz" in t or "3 oz" in t) and ("gulp" in t or "water" in t or "sip" in t):
+        if "oz" in t or "water" in t or "gulp" in t:
             return "3oz water"
         return ""
 
@@ -289,32 +303,71 @@ def main():
     # First attempt: parse labels from text if numbers already exist (e.g., 'effortful swallow 3')
     df["_gulp_raw"] = df["Activity"].map(norm_gulp_text)
 
-    if df["_gulp_raw"].str.contains(r"\d").any():
-        # Case 1: file already has explicit numbering in the Activity text.
-        # Keep those labels so your first file behaves exactly like before.
+
+    # ---------- FIXED LOGIC: detect numbering ONLY if digits are NOT from '3oz' ----------
+
+
+
+
+    #has_true_numbers = df["_gulp_raw"].str.contains(
+        #r"(?:effortful swallow|masako maneuver|3oz water)\D*(\d+)", regex=True
+    #)
+
+    # ---------- TRUE numbering detection ----------
+    # A number counts as a real trial number *only if* it appears AFTER the task keyword.
+    # Numbers at the very beginning (e.g. "3oz gulp ...") are ignored.
+
+    # ---------- TRUE numbering detection ----------
+    def has_true_trial_number(label: str) -> bool:
+        t = str(label).strip().lower()
+
+        # If label starts with a number (e.g., "3oz gulp"), ignore the number
+        if re.match(r"^\s*\d", t):
+            return False
+
+        # Number must appear AFTER the task name
+        m = re.match(r"(effortful swallow|masako maneuver|3oz water)\s+(\d+)$", t)
+        return m is not None
+
+    has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
+
+    if has_true_numbers.any():
+        # Case 1 — existing numbering found (keep it)
         df["_gulp"] = df["_gulp_raw"]
+
     else:
-        # Case 2: NO explicit numbers in Activity labels (your new BM file).
-        # We auto-number based on **contiguous blocks** of (task, location),
-        # using gaps/blanks in Activity/Environment as trial breaks.
+        # ---------- AUTO-NUMBER BASED ON BLANK GAPS ----------
+
         counters = defaultdict(int)
         gulp_labels = []
-        prev_task = None
-        prev_loc = None
+        prev_gap = True  # Force the first non-blank trial to start as #1
 
-        for task, loc in zip(df["task"], df["_location"]):
-            # Blank rows (no task or no location) break the trial.
-            if not task or not loc:
+        for task, loc, act, env in zip(
+            df["task"], 
+            df["_location"], 
+            df["Activity"], 
+            df["Environment"]
+        ):
+
+            # Blank row = both Activity AND Environment blank
+            if (str(act).strip() == "" or pd.isna(act)) and \
+               (str(env).strip() == "" or pd.isna(env)):
                 gulp_labels.append("")
-                prev_task, prev_loc = None, None
+                prev_gap = True
                 continue
 
-            # New trial if task or location changes (or previous was blank)
-            if task != prev_task or loc != prev_loc:
-                counters[task] += 1
+            # Only number rows with a valid task + location
+            if task and loc:
 
-            gulp_labels.append(f"{task} {counters[task]}")
-            prev_task, prev_loc = task, loc
+                # Start a NEW trial after every blank gap
+                if prev_gap:
+                    counters[task] += 1
+
+                gulp_labels.append(f"{task} {counters[task]}")
+                prev_gap = False
+            else:
+                gulp_labels.append("")
+                prev_gap = True
 
         df["_gulp"] = gulp_labels
 
