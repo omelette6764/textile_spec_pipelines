@@ -2,6 +2,8 @@
 # Usage:
 #   pip install pandas numpy scipy pywavelets matplotlib
 #   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_effortful
+#   python process_effortful.py --csv "BTVIZ_2025-11-05_bm_fr_effortf_and_masako_no_head_tilt.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_bm_fr_effortf_and_masako_no_head_tilt
+
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
@@ -13,6 +15,7 @@ import pywt
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 import time, os
+from collections import defaultdict   # NEW: for auto-numbering unlabeled trials
 
 
 def monotonic_local_time(series: pd.Series):
@@ -217,35 +220,106 @@ def main():
     # Detect labels
     def norm_loc(x):
         t = str(x).strip().lower()
-        if t.startswith("first right"):
-            return "first right"
-        if t.startswith("first left"):
-            return "first left"
-        if "top" in t and "middle" in t and "(actual)" in t:
-            return "top middle"
-        if "bottom" in t and "middle" in t:
-            return "bottom middle"
-        if t.startswith("second left"):
-            return "second left"
-        if t.startswith("second right"):
-            return "second right"
-        return t
+            
+        if "first right" in t: return "first right"
+        if "first left" in t: return "first left"
+        if "second right" in t: return "second right"
+        if "second left" in t: return "second left"
+        if "top" in t and "middle" in t: return "top middle"
+        if "bottom" in t and "middle" in t: return "bottom middle"
 
-    def norm_gulp(x):
+        return t  # fallback
+
+    #def norm_gulp(x):
+      #  t = str(x).strip().lower()
+
+        # Effortful swallow: accept many variations
+      #  if "effortful" in t:
+      #      m = re.search(r"(\d+)", t)
+      #      return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
+
+        # Masako: handle "masako", "masako maneuver", "masako attempt"
+      #  if "masako" in t:
+      #      m = re.search(r"(\d+)", t)
+      #      return f"masako maneuver {m.group(1)}" if m else "masako maneuver"
+
+        # 3 oz water: accept "3 oz", "3oz", "sip", "trial", parentheses, etc.
+     #   if ("3oz" in t or "3 oz" in t) and ("gulp" in t or "water" in t):
+      #      m = re.search(r"(\d+)", t)
+       #     return f"3oz water ({m.group(1)})" if m else "3oz water"
+        
+       # return ""
+
+   # df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
+   # df["_gulp"] = df["Activity"].map(norm_gulp) if "Activity" in df.columns else ""
+    
+
+
+    # ------------ NEW: task classification + gulp labeling ------------
+    def classify_task(x: str) -> str:
+        """Return coarse task type: 'effortful swallow', 'masako maneuver', '3oz water', or ''."""
         t = str(x).strip().lower()
-        if "effortful swallow" in t:
-            m = re.search(r"effortful swallow\s*([0-9]+)", t)
-            return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
-        if "masako maneuver" in t:
-            m = re.search(r"masako maneuver\s*([0-9]+)", t)
-            return f"masako maneuver {m.group(1)}" if m else "masako maneuver"
-        if "3oz water" in t:
-            m = re.search(r"3oz water\s*\(?([0-9]+)\)?", t)
-            return f"3oz water ({m.group(1)})" if m else "3oz water"
+        if "effortful" in t:
+            return "effortful swallow"
+        if "masako" in t:
+            return "masako maneuver"
+        if ("3oz" in t or "3 oz" in t) and ("gulp" in t or "water" in t or "sip" in t):
+            return "3oz water"
         return ""
 
+    def norm_gulp_text(x: str) -> str:
+        """
+        Canonical label from Activity text **if it already contains a number**.
+        Otherwise, just return the task name (no number).
+        """
+        raw = str(x).strip().lower()
+        task = classify_task(raw)
+        m = re.search(r"(\d+)", raw)
+        if task and m:
+            n = m.group(1)
+            if task == "3oz water":
+                return f"3oz water ({n})"
+            return f"{task} {n}"
+        return task
+
+    # Apply location + task classification
     df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
-    df["_gulp"] = df["Activity"].map(norm_gulp) if "Activity" in df.columns else ""
+    df["task"] = df["Activity"].map(classify_task)
+
+    # First attempt: parse labels from text if numbers already exist (e.g., 'effortful swallow 3')
+    df["_gulp_raw"] = df["Activity"].map(norm_gulp_text)
+
+    if df["_gulp_raw"].str.contains(r"\d").any():
+        # Case 1: file already has explicit numbering in the Activity text.
+        # Keep those labels so your first file behaves exactly like before.
+        df["_gulp"] = df["_gulp_raw"]
+    else:
+        # Case 2: NO explicit numbers in Activity labels (your new BM file).
+        # We auto-number based on **contiguous blocks** of (task, location),
+        # using gaps/blanks in Activity/Environment as trial breaks.
+        counters = defaultdict(int)
+        gulp_labels = []
+        prev_task = None
+        prev_loc = None
+
+        for task, loc in zip(df["task"], df["_location"]):
+            # Blank rows (no task or no location) break the trial.
+            if not task or not loc:
+                gulp_labels.append("")
+                prev_task, prev_loc = None, None
+                continue
+
+            # New trial if task or location changes (or previous was blank)
+            if task != prev_task or loc != prev_loc:
+                counters[task] += 1
+
+            gulp_labels.append(f"{task} {counters[task]}")
+            prev_task, prev_loc = task, loc
+
+        df["_gulp"] = gulp_labels
+
+
+
 
     # Choose time and channel columns
     time_col = (
@@ -293,7 +367,10 @@ def main():
 
     gulps = []
     for pattern_list in [effortful, masako, water]:
-        gulps.extend([g for g in pattern_list if (df["Activity"].str.lower() == g.lower()).any()])
+        #gulps.extend([g for g in pattern_list if (df["Activity"].str.lower() == g.lower()).any()])
+        for g in pattern_list:
+            if (df["_gulp"] == g).any():
+                gulps.append(g)
 
     print(f"Detected gulps: {gulps}")
 
@@ -455,6 +532,46 @@ def main():
                     chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}_of_effortful.png", dpi=150
                 )
                 plt.close(fig)
+
+
+        # === NEW: per-trial 6-channel plot INCLUDING event counts ===
+    chan_dir2 = outdir / "channel_plots_with_events"
+    chan_dir2.mkdir(parents=True, exist_ok=True)
+
+    for loc in locations:
+        for g in gulps:
+            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+            if len(seg) < 5:
+                continue
+
+            mode = gulp_mode(g)  # auto peak/trough selection
+            t = time_axis_for(seg)
+            Y = seg[channel_cols].to_numpy(float)
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+
+            # Plot each channel with event-count labeling
+            for i, cname in enumerate(channel_cols):
+                y = Y[:, i]
+                ypc, _ = normalize_percent(y)
+                metrics_ch = seg_metrics(ypc, dt=dt, mode=mode)
+                n_events = metrics_ch["n_humps"]
+
+                label = f"{cname} ({n_events} {mode})"
+                ax.plot(t, ypc, label=label, linewidth=1)
+
+            ax.set_title(f"{loc} — {g} — {mode} (all channels)")
+            ax.set_xlabel("Time (a.u.)")
+            ax.set_ylabel("Δ% from baseline")
+            ax.legend(fontsize=8, ncol=2)
+            fig.tight_layout()
+
+            fig.savefig(
+                chan_dir2 / f"{slug(loc)}_{slug(g)}_channels_with_events.png",
+                dpi=150
+            )
+            plt.close(fig)
+
 
     print("Done. Outputs (of effortful) in:", outdir.as_posix())
 
