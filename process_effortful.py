@@ -527,13 +527,17 @@ def main():
             plt.plot(t, ypc, label=g)
             any_plot = True
         if any_plot:
-            plt.title(f"{loc} — gulps overlay (Δ% from baseline)")
-            plt.xlabel("time (a.u.)")
-            plt.ylabel("Δ%")
+            plt.title(f"{loc.title()} — Gulps Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+            plt.xlabel("Data Point Index")
+            plt.ylabel("Percent Change (Δ%) from Baseline")
             plt.legend()
             plt.tight_layout()
             plt.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_norm_of_effortful.png", dpi=150)
             plt.close()
+
+        # === Locations overlay plots directory ===
+        locations_overlay_dir = outdir / "Locations Overlay"
+        locations_overlay_dir.mkdir(parents=True, exist_ok=True)
 
         # per gulp: overlay locations
         for g in gulps:
@@ -550,12 +554,12 @@ def main():
                 plt.plot(t, ypc, label=loc2)
                 any_plot = True
             if any_plot:
-                plt.title(f"{g} — locations overlay (Δ% from baseline)")
-                plt.xlabel("time (a.u.)")
-                plt.ylabel("Δ%")
+                plt.title(f"{g.title()} — Locations Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+                plt.xlabel("Data Point Index")
+                plt.ylabel("Percent Change (Δ%) from Baseline")
                 plt.legend()
                 plt.tight_layout()
-                plt.savefig(outdir / f"{g.replace(' ', '_')}_locations_overlay_norm_of_effortful.png", dpi=150)
+                plt.savefig(locations_overlay_dir / f"{g.replace(' ', '_')}_locations_overlay_norm_of_effortful.png", dpi=150)
                 plt.close()
 
     # === NEW-ish: Per-(location, gulp) plots showing all 6 channels ===
@@ -597,7 +601,7 @@ def main():
                             else (y - b) / b * 100.0
                         )
                         ax.plot(t, ypc, label=cname)
-                    ax.set_ylabel("Δ% from baseline")
+                    ax.set_ylabel("Percent Change (Δ%) from Baseline")
                     suffix = "norm_of_effortful"
                 else:
                     for i, cname in enumerate(channel_cols):
@@ -605,8 +609,8 @@ def main():
                     ax.set_ylabel("Signal (a.u.)")
                     suffix = "raw_of_effortful"
 
-                ax.set_title(f"{loc} — {g} (6 channels, {'SWT' if args.denoise else 'raw'})")
-                ax.set_xlabel("Time (a.u.)")
+                ax.set_title(f"{loc.title()} — {g.title()} (6 channels, {args.plot_channels_mode}, {'SWT' if args.denoise else 'raw'}, {len(seg)} Samples)")
+                ax.set_xlabel("Data Point Index")
                 ax.legend(ncol=3, fontsize=8)
                 fig.tight_layout()
                 fig.savefig(
@@ -638,13 +642,13 @@ def main():
                 metrics_ch = seg_metrics(ypc, dt=dt, mode=mode)
                 n_events = metrics_ch["n_humps"]
 
-                label = f"{cname} ({n_events} {mode})"
+                label = f"Channel {i} / {n_events}"
                 ax.plot(t, ypc, label=label, linewidth=1)
 
-            ax.set_title(f"{loc} — {g} — {mode} (all channels)")
-            ax.set_xlabel("Time (a.u.)")
-            ax.set_ylabel("Δ% from baseline")
-            ax.legend(fontsize=8, ncol=2)
+            ax.set_title(f"{loc.title()} — {g.title()} — {mode.title()} Detection (All Channels, {len(seg)} Samples)")
+            ax.set_xlabel("Data Point Index")
+            ax.set_ylabel("Percent Change (Δ%) from Baseline")
+            ax.legend(title="Channel / Events", title_fontsize=9, fontsize=8, ncol=2, loc="lower right")
             fig.tight_layout()
 
             fig.savefig(
