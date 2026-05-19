@@ -1,0 +1,66 @@
+Notes: Channel Plots Folder Image Outputs
+
+effortful_swallow_1: multiple troughs for some reason
+--> updated to only extract last continuous data segment
+effortful_swallow_2: 1 trough
+effortful_swallow_3: 1 trough
+effortful_swallow_4: 1 trough
+effortful_swallow_5: 1 trough
+effortful_swallow_6: 1 trough
+effortful_swallow_7: 1 trough
+effortful_swallow_8: 1 trough
+effortful_swallow_9: 1 trough
+effortful_swallow_10: 1 trough
+effortful_swallow_11: 1 trough
+effortful_swallow_12: 1 trough
+effortful_swallow_13: 2 troughs
+effortful_swallow_14: 1 trough
+effortful_swallow_15: 1 trough
+effortful_swallow_16: 1 trough
+effortful_swallow_17: 1 trough
+effortful_swallow_18: 1 trough
+effortful_swallow_19: 1 trough
+effortful_swallow_20: 1 trough
+effortful_swallow_21: 1 trough AND square-ish
+effortful_swallow_22: 1 trough AND square-ish
+effortful_swallow_23: 2 troughs
+effortful_swallow_24: 1 trough odd but passable
+effortful_swallow_25: 1 trough odd but passable
+effortful_swallow_26: 1 trough odd but passable
+effortful_swallow_27: 1 trough
+effortful_swallow_28: 1 trough
+effortful_swallow_29: 1 trough
+effortful_swallow_30: 1 trough
+
+masako_maneuver_1:
+masako_maneuver_2:
+masako_maneuver_3:
+masako_maneuver_4:
+masako_maneuver_5:
+masako_maneuver_6:
+masako_maneuver_7:
+masako_maneuver_8:
+masako_maneuver_9:
+masako_maneuver_10:
+masako_maneuver_11:
+masako_maneuver_12:
+masako_maneuver_13:
+masako_maneuver_14:
+masako_maneuver_15:
+masako_maneuver_16:
+masako_maneuver_17:
+masako_maneuver_18:
+masako_maneuver_19:
+masako_maneuver_20:
+masako_maneuver_21:
+masako_maneuver_22:
+masako_maneuver_23:
+masako_maneuver_24:
+masako_maneuver_25: multiple troughs for some reason
+masako_maneuver_26: nonexistent
+masako_maneuver_27: stretched out (too much data)
+--> updated to only extract last continuous data segment
+-> also now the data lines look closer together
+masako_maneuver_28: data plots closer together for some reason
+masako_maneuver_29: data plots closer together for some reason
+masako_maneuver_30: data plots closer together for some reason
