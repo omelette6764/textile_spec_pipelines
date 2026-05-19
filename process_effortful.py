@@ -4,6 +4,7 @@
 #   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_effortful
 #   python process_effortful.py --csv "BTVIZ_2025-11-05_bm_fr_effortf_and_masako_no_head_tilt.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_bm_fr_effortf_and_masako_no_head_tilt
 #   python process_effortful.py --csv "BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean_TEST_effortful_after_modifying_for_no_head_tilting_file
+#   python process_effortful.py --csv "BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_30_masako_effortful_5_18_26
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
@@ -414,9 +415,9 @@ def main():
     ]
 
     # --- Build gulp lists for all three task types ---
-    effortful = [f"effortful swallow {i}" for i in range(1, 6)]
-    masako = [f"masako maneuver {i}" for i in range(1, 11)]
-    water = [f"3oz water ({i})" for i in range(1, 4)]
+    effortful = [f"effortful swallow {i}" for i in range(1, 100)]
+    masako = [f"masako maneuver {i}" for i in range(1, 100)]
+    water = [f"3oz water ({i})" for i in range(1, 100)]
 
     gulps = []
     for pattern_list in [effortful, masako, water]:
