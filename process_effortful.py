@@ -209,6 +209,12 @@ def main():
         choices=["raw", "norm"],
         help="Plot 'raw' filtered signals or 'norm' (Δ%% from baseline) per channel",
     )
+    ap.add_argument(
+        "--debug-segments",
+        action="store_true",
+        help="Print a message when earlier repeated segment blocks are dropped and only the last contiguous block is used",
+    )
+
     # (Optional) debug toggle for event overlays – you can set this True inside code if needed
     # ap.add_argument("--debug-events", action="store_true", help="Overlay detected events on mean traces")
 
@@ -406,6 +412,27 @@ def main():
         # Fallback: treat as peaks
         return "peaks"
 
+    def last_contiguous_segment(df, mask):
+        idx = np.flatnonzero(mask.values)
+        if idx.size == 0:
+            return df.iloc[0:0]
+        breaks = np.where(np.diff(idx) != 1)[0]
+        start = idx[breaks[-1] + 1] if breaks.size else idx[0]
+        return df.iloc[idx[idx >= start]]
+
+    def get_last_segment(loc, g):
+        mask = (df["_location"] == loc) & (df["_gulp"] == g)
+        seg = last_contiguous_segment(df, mask)
+        if args.debug_segments:
+            all_count = int(mask.sum())
+            last_count = len(seg)
+            if all_count > last_count:
+                print(
+                    f"DEBUG: Dropped earlier repeated segments for {loc} / {g}: "
+                    f"{all_count - last_count} rows removed, keeping last contiguous {last_count} rows"
+                )
+        return seg
+
     # === Compute per-segment metrics (mean across channels + channel-wise) ===
     rows = []
     locations = [
@@ -430,7 +457,7 @@ def main():
 
     for loc in locations:
         for g in gulps:
-            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+            seg = get_last_segment(loc, g)
             if len(seg) < 5:
                 continue
 
@@ -490,7 +517,7 @@ def main():
         plt.figure(figsize=(10, 4))
         any_plot = False
         for g in gulps:
-            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+            seg = get_last_segment(loc, g)
             if len(seg) < 5:
                 continue
             t = time_axis_for(seg)
@@ -513,7 +540,7 @@ def main():
             plt.figure(figsize=(10, 4))
             any_plot = False
             for loc2 in locations:
-                seg = df[(df["_location"] == loc2) & (df["_gulp"] == g)]
+                seg = get_last_segment(loc2, g)
                 if len(seg) < 5:
                     continue
                 t = time_axis_for(seg)
@@ -549,7 +576,7 @@ def main():
 
         for loc in locations:
             for g in gulps:
-                seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+                seg = get_last_segment(loc, g)
                 if len(seg) < 5:
                     continue
 
@@ -594,7 +621,7 @@ def main():
 
     for loc in locations:
         for g in gulps:
-            seg = df[(df["_location"] == loc) & (df["_gulp"] == g)]
+            seg = get_last_segment(loc, g)
             if len(seg) < 5:
                 continue
 
