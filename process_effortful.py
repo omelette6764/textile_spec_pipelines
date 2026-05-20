@@ -412,6 +412,22 @@ def main():
         # Fallback: treat as peaks
         return "peaks"
 
+    # Helper: compute consensus event count using majority voting with tie handling
+    def get_consensus_event_count(event_counts):
+        """
+        Given a list of event counts (integers), determine consensus using majority voting.
+        If tie, return concatenated string of tied counts (e.g., [1, 3, 1] -> "1" since 1 appears twice,
+        but [1, 3, 3] -> "3", and [1, 2, 3] -> "123" for a 3-way tie).
+        """
+        from collections import Counter
+        event_counts = [int(c) for c in event_counts if np.isfinite(c)]
+        if not event_counts:
+            return np.nan
+        counts = Counter(event_counts)
+        max_freq = max(counts.values())
+        tied_counts = sorted([c for c, freq in counts.items() if freq == max_freq])
+        return "".join(str(c) for c in tied_counts)
+
     def last_contiguous_segment(df, mask):
         idx = np.flatnonzero(mask.values)
         if idx.size == 0:
@@ -481,6 +497,20 @@ def main():
         return
 
     metrics = pd.DataFrame(rows)
+
+    # === NEW: Compute consensus event count for each (location, gulp) pair ===
+    consensus_dict = {}
+    for (loc, g), group in metrics.groupby(['location', 'gulp']):
+        # Get all per-channel event counts (excluding the "mean" channel)
+        channel_events = group[group['channel'] != 'mean']['n_humps'].values
+        consensus = get_consensus_event_count(channel_events)
+        consensus_dict[(loc, g)] = consensus
+    
+    # Add consensus field to all rows
+    metrics['consensus_event_count'] = metrics.apply(
+        lambda row: consensus_dict.get((row['location'], row['gulp']), np.nan),
+        axis=1
+    )
 
     # gives me a warning if my file is still open/can't be accessed
     csv_path = outdir / "metrics_pct_of_effortful.csv"
@@ -645,7 +675,113 @@ def main():
             t = time_axis_for(seg)
             Y = seg[channel_cols].to_numpy(float)
 
+            # Get consensus event count for this trial
+            consensus = consensus_dict.get((loc, g), np.nan)
+
             fig, ax = plt.subplots(figsize=(10, 4))
+
+            # === NEW: Detect events on the normalized mean signal ===
+            ymean = np.nanmean(Y, axis=1)
+            ymean_pct, _ = normalize_percent(ymean)
+            yb = ymean_pct - np.nanmedian(ymean_pct[:max(20, int(0.1 * len(ymean_pct)))])
+            std = np.nanstd(yb) if np.isfinite(np.nanstd(yb)) else 0.0
+            
+            # Detect events based on mode
+            if mode == "troughs":
+                events, props = find_peaks(
+                    -yb,
+                    height=std * 1.0,
+                    prominence=std * 2.0,
+                    distance=int(0.6 / dt) if dt > 0 else 3,
+                )
+            else:
+                events, props = find_peaks(
+                    yb,
+                    height=std * 1.0,
+                    prominence=std * 2.0,
+                    distance=int(0.6 / dt) if dt > 0 else 3,
+                )
+            
+            # Get trough boundaries for each event
+            troughs_all, _ = find_peaks(
+                -yb,
+                prominence=std * 1.0 if std > 0 else 0.0,
+                distance=int(0.6 / dt) if dt > 0 else 3,
+            )
+            
+            # For each event, find a local boundary centered around that event using
+            # midpoints to neighboring troughs so each event gets its own window.
+            event_bounds = []
+            troughs = np.asarray(troughs_all, dtype=int)
+            for ev in events:
+                ev = int(ev)
+                # find insertion position in troughs array
+                if troughs.size == 0:
+                    # fallback: small window around event
+                    left = max(0, ev - 1)
+                    right = min(len(yb) - 1, ev + 1)
+                else:
+                    # find index of nearest trough equal to ev, or insertion point
+                    pos = np.searchsorted(troughs, ev)
+                    # previous trough index
+                    if pos > 0:
+                        prev_idx = troughs[pos - 1]
+                    else:
+                        prev_idx = None
+                    # next trough index
+                    if pos < troughs.size:
+                        # if exact match at pos, that's the current trough
+                        if troughs[pos] == ev:
+                            # use neighbors for midpoints
+                            prev_idx = troughs[pos - 1] if pos - 1 >= 0 else None
+                            next_idx = troughs[pos + 1] if pos + 1 < troughs.size else None
+                        else:
+                            next_idx = troughs[pos]
+                    else:
+                        next_idx = None
+
+                    # compute left/right as midpoints between adjacent troughs and the event
+                    if prev_idx is not None:
+                        left = int(np.floor((prev_idx + ev) / 2))
+                    else:
+                        # no previous trough: take midpoint to next or small window
+                        if next_idx is not None:
+                            left = int(np.floor((ev + next_idx) / 2)) - (next_idx - ev)
+                            left = max(0, left)
+                        else:
+                            left = max(0, ev - 1)
+
+                    if next_idx is not None:
+                        right = int(np.ceil((ev + next_idx) / 2))
+                    else:
+                        if prev_idx is not None:
+                            right = int(np.ceil((prev_idx + ev) / 2)) + (ev - prev_idx)
+                            right = min(len(yb) - 1, right)
+                        else:
+                            right = min(len(yb) - 1, ev + 1)
+
+                # ensure bounds valid
+                left = max(0, int(left))
+                right = min(len(yb) - 1, int(right))
+
+                # Find the extremum (minimum for troughs, maximum for peaks) inside this local window
+                event_region = yb[left : right + 1]
+                if event_region.size == 0:
+                    extremum_idx = ev
+                else:
+                    if mode == "troughs":
+                        extremum_local_idx = int(np.nanargmin(event_region))
+                    else:
+                        extremum_local_idx = int(np.nanargmax(event_region))
+                    extremum_idx = left + extremum_local_idx
+
+                # Calculate 10% margin around the extremum with a minimum width
+                event_width = max(3, right - left)
+                margin = max(1, int(0.1 * event_width))
+                highlight_start_idx = max(0, extremum_idx - margin)
+                highlight_end_idx = min(len(yb) - 1, extremum_idx + margin)
+
+                event_bounds.append((highlight_start_idx, highlight_end_idx))
 
             # Plot each channel with event-count labeling
             for i, cname in enumerate(channel_cols):
@@ -657,10 +793,32 @@ def main():
                 label = f"Channel {i} / {n_events}"
                 ax.plot(t, ypc, label=label, linewidth=1)
 
+            # === NEW: Add transparent rectangles for detected events ===
+            for t_start_idx, t_end_idx in event_bounds:
+                ax.axvspan(t[t_start_idx], t[t_end_idx], alpha=0.15, color='violet', zorder=0)
+            # Display mean-signal event count (using same seg_metrics pipeline)
+            m_mean = seg_metrics(ymean_pct, dt=dt, mode=mode)
+            mean_n = m_mean.get("n_humps", np.nan)
+
             ax.set_title(f"{loc.title()} — {g.title()} — {mode.title()} Detection (All Channels, {len(seg)} Samples)")
             ax.set_xlabel("Data Point Index")
             ax.set_ylabel("Percent Change (Δ%) from Baseline")
-            ax.legend(title="Channel / Events", title_fontsize=9, fontsize=8, ncol=2, loc="lower right")
+
+            # Put mean-signal event count at top-right inside axes
+            mean_text = f"Mean signal: {int(mean_n) if np.isfinite(mean_n) else 'N/A'}"
+            ax.text(
+                0.98,
+                0.98,
+                mean_text,
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+            )
+
+            consensus_str = str(consensus) if pd.notna(consensus) else "N/A"
+            ax.legend(title=f"Channel / Events (Consensus: {consensus_str})", title_fontsize=9, fontsize=8, ncol=2, loc="lower right")
             fig.tight_layout()
 
             fig.savefig(
@@ -669,6 +827,19 @@ def main():
             )
             plt.close(fig)
 
+    # === NEW: Create summary table with trial-level consensus event counts ===
+    summary_rows = []
+    for (loc, g), group in metrics.groupby(['location', 'gulp']):
+        consensus = group['consensus_event_count'].iloc[0]  # Same for all rows in group
+        summary_rows.append({
+            'location': loc,
+            'trial': g,
+            'consensus_event_count': consensus
+        })
+    
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_csv(outdir / "trial_consensus_event_counts.csv", index=False)
 
     print("Done. Outputs (of effortful) in:", outdir.as_posix())
 
