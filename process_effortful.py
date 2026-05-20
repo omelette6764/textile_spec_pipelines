@@ -512,28 +512,40 @@ def main():
         t = monotonic_local_time(seg[time_col])
         return t if t is not None else np.arange(len(seg))
 
-    # per location: overlay gulps
-    for loc in locations:
-        plt.figure(figsize=(10, 4))
-        any_plot = False
-        for g in gulps:
-            seg = get_last_segment(loc, g)
-            if len(seg) < 5:
-                continue
-            t = time_axis_for(seg)
-            Y = seg[channel_cols].to_numpy(float)
-            ymean = np.nanmean(Y, axis=1)
-            ypc, _ = normalize_percent(ymean)
-            plt.plot(t, ypc, label=g)
-            any_plot = True
-        if any_plot:
-            plt.title(f"{loc.title()} — Gulps Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
-            plt.xlabel("Data Point Index")
-            plt.ylabel("Percent Change (Δ%) from Baseline")
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_norm_of_effortful.png", dpi=150)
-            plt.close()
+    # Helper function to generate overlay plots for a filtered set of gulps
+    def generate_overlay_plots(filtered_gulps, task_name):
+        """Generate overlay plots for a specific task type (e.g., 'effortful swallow' or 'masako maneuver')."""
+        for loc in locations:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            any_plot = False
+            for g in filtered_gulps:
+                seg = get_last_segment(loc, g)
+                if len(seg) < 5:
+                    continue
+                t = time_axis_for(seg)
+                Y = seg[channel_cols].to_numpy(float)
+                ymean = np.nanmean(Y, axis=1)
+                ypc, _ = normalize_percent(ymean)
+                ax.plot(t, ypc, label=g)
+                any_plot = True
+            if any_plot:
+                ax.set_title(f"{loc.title()} — {task_name} Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+                ax.set_xlabel("Data Point Index")
+                ax.set_ylabel("Percent Change (Δ%) from Baseline")
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+                fig.tight_layout()
+                fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_norm_of_effortful.png", dpi=150, bbox_inches='tight')
+                plt.close(fig)
+
+    # Generate separate overlays for effortful swallows and masako maneuvers
+    effortful_gulps = [g for g in gulps if "effortful swallow" in g]
+    masako_gulps = [g for g in gulps if "masako maneuver" in g]
+    
+    if effortful_gulps:
+        generate_overlay_plots(effortful_gulps, "Effortful Swallow")
+    
+    if masako_gulps:
+        generate_overlay_plots(masako_gulps, "Masako Maneuver")
 
         # === Locations overlay plots directory ===
         locations_overlay_dir = outdir / "Locations Overlay"
