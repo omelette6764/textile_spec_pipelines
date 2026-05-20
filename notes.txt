@@ -64,3 +64,11 @@ masako_maneuver_27: stretched out (too much data)
 masako_maneuver_28: data plots closer together for some reason
 masako_maneuver_29: data plots closer together for some reason
 masako_maneuver_30: data plots closer together for some reason
+
+
+notes for next steps:
+- determine why some plots in channel_plots_with_events have narrower highlighted
+regions than others
+- determine what the width of the highlights represent
+- plot the overlaid masako and effortful plots in a way where the maximum/
+minimum of the first identified event lines up across the trials for a cleaner look
