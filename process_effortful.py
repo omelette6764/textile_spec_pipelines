@@ -7,6 +7,7 @@
 
 #   python process_effortful.py --csv "BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_30_masako_effortful_5_18_26
 #   python process_effortful.py --csv "BTVIZ_2026-05-19_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_19_26
+#   python process_effortful.py --csv "BTVIZ_2026-05-20_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_20_26
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
