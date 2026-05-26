@@ -371,8 +371,10 @@ def main():
                 # Start a NEW trial after every blank gap
                 if prev_gap:
                     counters[task] += 1
-
-                gulp_labels.append(f"{task} {counters[task]}")
+                if task == "3oz water":
+                    gulp_labels.append(f"3oz water ({counters[task]})")
+                else:
+                    gulp_labels.append(f"{task} {counters[task]}")
                 prev_gap = False
             else:
                 gulp_labels.append("")
