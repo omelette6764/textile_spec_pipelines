@@ -8,6 +8,8 @@
 #   python process_effortful.py --csv "BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_30_masako_effortful_5_18_26
 #   python process_effortful.py --csv "BTVIZ_2026-05-19_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_19_26
 #   python process_effortful.py --csv "BTVIZ_2026-05-20_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_20_26
+
+#   python process_effortful.py --csv "BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_30_masako_effortful_5_27_26
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
@@ -84,7 +86,7 @@ def normalize_percent(y):
     return (y - b) / b * 100.0, b
 
 
-# === CHANGED: seg_metrics now supports mode='peaks' or 'troughs' ===
+# === CHANGED: seg_metrics now supports mode='peaks', 'troughs', and 'troughs_water' ===
 def seg_metrics(y_pct, dt=1.0, mode="peaks"):
     """
     On normalized (Δ%) signal:
@@ -92,9 +94,10 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
       - n_humps = number of events (peaks or troughs depending on mode)
       - mean_inter_gulp_s, mean_time_to_peak_s, mean_time_to_dip_s
 
-    mode:
-      'peaks'   -> detect upward humps (e.g., 3oz water trials)
-      'troughs' -> detect downward gulps (e.g., effortful swallow, masako)
+        mode:
+            'peaks'       -> detect upward humps (default for non-water tasks)
+            'troughs'     -> detect downward gulps (effortful/masako)
+            'troughs_water' -> detect smaller/closer troughs typical of 3oz water trials
     """
     n = len(y_pct)
     if n == 0:
@@ -127,19 +130,29 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
             prominence=std * 2.0,
             distance=int(0.6 / dt) if dt > 0 else 3,
         )
+    elif mode == "troughs_water":
+        # Water troughs are often smaller and closer together — use moderate sensitivity
+        events, props = find_peaks(
+            -yb,
+            height=std * 0.4,
+            prominence=std * 0.4,
+            distance=int(0.4 / dt) if dt > 0 else 3,
+        )
     else:
-        # Default: peaks as events (3oz water, or anything unspecified)
+        # For peaks (non-water): use lower prominence to detect multiple small peaks
         events, props = find_peaks(
             yb,
-            height=std * 1.0,
-            prominence=std * 2.0,
+            height=std * 0.25,
+            prominence=std * 0.25,
             distance=int(0.6 / dt) if dt > 0 else 3,
         )
 
     # We still detect troughs for boundary timing (even in peak mode)
+    # Use a more permissive trough detector for boundary timing when in water mode
+    trough_prom = (std * 0.4) if (mode == "troughs_water" and std > 0) else (std * 1.0 if std > 0 else 0.0)
     troughs, _ = find_peaks(
         -yb,
-        prominence=std * 1.0 if std > 0 else 0.0,
+        prominence=trough_prom,
         distance=int(0.6 / dt) if dt > 0 else 3,
     )
 
@@ -298,13 +311,25 @@ def main():
         """
         raw = str(x).strip().lower()
         task = classify_task(raw)
-        m = re.search(r"(\d+)", raw)
-        if task and m:
-            n = m.group(1)
-            if task == "3oz water":
-                return f"3oz water ({n})"
-            return f"{task} {n}"
-        return task
+        if not task:
+            return ""
+
+        nums = re.findall(r"(\d+)", raw)
+        if not nums:
+            return task
+
+        if task == "3oz water":
+            # Ignore the leading "3" from "3oz" and use the trial number if present.
+            if len(nums) > 1:
+                n = nums[-1]
+            else:
+                return task
+        else:
+            n = nums[-1]
+
+        if task == "3oz water":
+            return f"3oz water ({n})"
+        return f"{task} {n}"
 
     # Apply location + task classification
     df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
@@ -331,13 +356,12 @@ def main():
     def has_true_trial_number(label: str) -> bool:
         t = str(label).strip().lower()
 
-        # If label starts with a number (e.g., "3oz gulp"), ignore the number
-        if re.match(r"^\s*\d", t):
-            return False
+        # For water trials, allow numbers inside parentheses (e.g. "3oz water (6)").
+        if t.startswith("3oz water"):
+            return bool(re.match(r"^3oz water\s*\(\s*(\d+)\s*\)$", t))
 
-        # Number must appear AFTER the task name
-        m = re.match(r"(effortful swallow|masako maneuver|3oz water)\s+(\d+)$", t)
-        return m is not None
+        # For effortful/masako, the number must follow the task name.
+        return bool(re.match(r"^(effortful swallow|masako maneuver)\s+(\d+)$", t))
 
     has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
 
@@ -411,7 +435,7 @@ def main():
     def gulp_mode(gname: str) -> str:
         gl = str(gname).lower()
         if "3oz water" in gl:
-            return "peaks"   # count humps
+            return "troughs_water"   # detect smaller/closer downward troughs for water trials
         if "effortful swallow" in gl or "masako maneuver" in gl:
             return "troughs" # count downward gulps
         # Fallback: treat as peaks
@@ -699,18 +723,26 @@ def main():
                     prominence=std * 2.0,
                     distance=int(0.6 / dt) if dt > 0 else 3,
                 )
+            elif mode == "troughs_water":
+                events, props = find_peaks(
+                    -yb,
+                    height=std * 0.4,
+                    prominence=std * 0.4,
+                    distance=int(0.4 / dt) if dt > 0 else 3,
+                )
             else:
                 events, props = find_peaks(
                     yb,
-                    height=std * 1.0,
-                    prominence=std * 2.0,
+                    height=std * 0.25,
+                    prominence=std * 0.25,
                     distance=int(0.6 / dt) if dt > 0 else 3,
                 )
-            
-            # Get trough boundaries for each event
+
+            # Get trough boundaries for each event (use more permissive trough detection for water)
+            troughs_prom = (std * 0.4) if (mode == "troughs_water" and std > 0) else (std * 1.0 if std > 0 else 0.0)
             troughs_all, _ = find_peaks(
                 -yb,
-                prominence=std * 1.0 if std > 0 else 0.0,
+                prominence=troughs_prom,
                 distance=int(0.6 / dt) if dt > 0 else 3,
             )
             
@@ -774,7 +806,7 @@ def main():
                 if event_region.size == 0:
                     extremum_idx = ev
                 else:
-                    if mode == "troughs":
+                    if mode in ("troughs", "troughs_water"):
                         extremum_local_idx = int(np.nanargmin(event_region))
                     else:
                         extremum_local_idx = int(np.nanargmax(event_region))
