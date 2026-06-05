@@ -1,0 +1,896 @@
+# process_effortful.py
+# Usage:
+#   pip install pandas numpy scipy pywavelets matplotlib
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean_effortful
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2025-11-05_bm_fr_effortf_and_masako_no_head_tilt.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean_bm_fr_effortf_and_masako_no_head_tilt
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean_TEST_effortful_after_modifying_for_no_head_tilting_file
+
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_30_masako_effortful_5_18_26
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-19_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_5_19_26
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-20_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_5_20_26
+
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_30_masako_effortful_5_27_26
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-28_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_5_28_26
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-06-05_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_6_5_26
+# Options:
+#   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean
+
+import argparse, re
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import pywt
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+import time, os
+from collections import defaultdict   # NEW: for auto-numbering unlabeled trials
+
+
+def monotonic_local_time(series: pd.Series):
+    """Make a monotonic local time axis from a numeric or datetime timestamp; fallback to sample index."""
+    if series is None:
+        return None
+    s = series
+    if pd.api.types.is_numeric_dtype(s):
+        base = s.to_numpy(dtype=float)
+        base = base - base[0]
+        diffs = np.diff(base)
+        pos = diffs[diffs > 0]
+        step = np.median(pos) if pos.size > 0 else 1.0
+        t = base.copy()
+        for i in range(1, len(t)):
+            if t[i] <= t[i-1]:
+                t[i] = t[i-1] + step
+        return t
+    else:
+        dt = pd.to_datetime(s, errors="coerce")
+        if dt.notna().mean() > 0.7:
+            return (dt - dt.iloc[0]).dt.total_seconds().to_numpy()
+    return None
+
+
+def swt_denoise_array(X, wavelet="db2", level=3, zero_levels=(1, 2, 3)):
+    """Apply SWT denoising to a (T, C) array and return (T, C)."""
+    X = np.asarray(X, float)
+    T, C = X.shape
+    block = 2 ** level
+    T_pad = int(np.ceil(T / block) * block)
+    pad = T_pad - T
+    Y = np.empty((T, C), dtype=float)
+    zl = {l for l in zero_levels if 1 <= l <= level}
+
+    for c in range(C):
+        xc = X[:, c]
+        if pad > 0:
+            xc = np.pad(xc, (0, pad), mode="reflect")
+        coeffs = pywt.swt(xc, wavelet=wavelet, level=level, norm=True)
+        new_coeffs = []
+        for j, (cA, cD) in enumerate(coeffs, start=1):
+            if j in zl:
+                cD = np.zeros_like(cD)
+            new_coeffs.append((cA, cD))
+        xc_hat = pywt.iswt(new_coeffs, wavelet=wavelet, norm=True)
+        if pad > 0:
+            xc_hat = xc_hat[:T]
+        Y[:, c] = xc_hat
+    return Y
+
+
+def normalize_percent(y):
+    """Δ% = 100*(y - baseline)/baseline, baseline = median of first 10% or 20 samples."""
+    n = len(y)
+    if n == 0:
+        return np.full(0, np.nan), np.nan
+    b_len = max(20, int(0.1 * n))
+    b = float(np.nanmedian(y[:b_len]))
+    if not np.isfinite(b) or b == 0:
+        return np.full_like(y, np.nan, dtype=float), b
+    return (y - b) / b * 100.0, b
+
+
+# === CHANGED: seg_metrics now supports mode='peaks', 'troughs', and 'troughs_water' ===
+def seg_metrics(y_pct, dt=1.0, mode="peaks"):
+    """
+    On normalized (Δ%) signal:
+      - baseline%, amplitude%, t_peak_idx, AUC% (≥0), FWHM (samples & seconds)
+      - n_humps = number of events (peaks or troughs depending on mode)
+      - mean_inter_gulp_s, mean_time_to_peak_s, mean_time_to_dip_s
+
+        mode:
+            'peaks'       -> detect upward humps (default for non-water tasks)
+            'troughs'     -> detect downward gulps (effortful/masako)
+            'troughs_water' -> detect smaller/closer troughs typical of 3oz water trials
+    """
+    n = len(y_pct)
+    if n == 0:
+        return dict(
+            baseline_pct=np.nan,
+            amplitude_pct=np.nan,
+            t_peak_idx=np.nan,
+            auc_pct=np.nan,
+            fwhm_samples=np.nan,
+            fwhm_seconds=np.nan,
+            n_humps=np.nan,
+            mean_inter_gulp_s=np.nan,
+            mean_time_to_peak_s=np.nan,
+            mean_time_to_dip_s=np.nan,
+        )
+
+    # --- baseline and amplitude calculations ---
+    b_len = max(20, int(0.1 * n))
+    baseline_pct = float(np.nanmedian(y_pct[:b_len]))
+    yb = y_pct - baseline_pct
+
+    std = np.nanstd(yb) if np.isfinite(np.nanstd(yb)) else 0.0
+
+    # --- CHANGED: event detection depends on mode ---
+    if mode == "troughs":
+        # Use troughs as events (for masako/effortful swallows)
+        events, props = find_peaks(
+            -yb,
+            height=std * 1.0,
+            prominence=std * 2.0,
+            distance=int(0.6 / dt) if dt > 0 else 3,
+        )
+    elif mode == "troughs_water":
+        # Water troughs are often smaller and closer together — use moderate sensitivity
+        events, props = find_peaks(
+            -yb,
+            height=std * 0.4,
+            prominence=std * 0.4,
+            distance=int(0.4 / dt) if dt > 0 else 3,
+        )
+    else:
+        # For peaks (non-water): use lower prominence to detect multiple small peaks
+        events, props = find_peaks(
+            yb,
+            height=std * 0.25,
+            prominence=std * 0.25,
+            distance=int(0.6 / dt) if dt > 0 else 3,
+        )
+
+    # We still detect troughs for boundary timing (even in peak mode)
+    # Use a more permissive trough detector for boundary timing when in water mode
+    trough_prom = (std * 0.4) if (mode == "troughs_water" and std > 0) else (std * 1.0 if std > 0 else 0.0)
+    troughs, _ = find_peaks(
+        -yb,
+        prominence=trough_prom,
+        distance=int(0.6 / dt) if dt > 0 else 3,
+    )
+
+    # --- amplitude and AUC overall (same definition as before) ---
+    amplitude_pct = float(np.nanmax(yb)) if np.isfinite(np.nanmax(yb)) else np.nan
+    t_peak_idx = int(np.nanargmax(yb)) if np.isfinite(amplitude_pct) else np.nan
+    auc_pct = float(np.nansum(np.maximum(yb, 0.0))) * dt  # %·s if dt in seconds
+
+    # --- FWHM overall calculation (same as before) ---
+    if np.isfinite(amplitude_pct) and amplitude_pct > 0:
+        half = amplitude_pct / 2.0
+        idx = np.where(yb >= half)[0]
+        fwhm_samples = float(idx[-1] - idx[0] + 1) if len(idx) >= 2 else np.nan
+    else:
+        fwhm_samples = np.nan
+
+    # --- per-event timing metrics ---
+    n_humps = len(events)
+    inter_gulp_times = []
+    time_to_peak = []
+    time_to_dip = []
+
+    if n_humps > 0:
+        for ev in events:
+            # start of hump = last trough before the event
+            prev_tr = troughs[troughs < ev]
+            next_tr = troughs[troughs > ev]
+            t_start = prev_tr[-1] if len(prev_tr) else 0
+            t_end = next_tr[0] if len(next_tr) else n - 1
+            time_to_peak.append((ev - t_start) * dt)
+            time_to_dip.append((t_end - ev) * dt)
+        if len(events) >= 2:
+            inter_gulp_times = np.diff(events) * dt
+
+    mean_inter_gulp_s = np.nanmean(inter_gulp_times) if len(inter_gulp_times) else np.nan
+    mean_time_to_peak_s = np.nanmean(time_to_peak) if len(time_to_peak) else np.nan
+    mean_time_to_dip_s = np.nanmean(time_to_dip) if len(time_to_dip) else np.nan
+
+    return dict(
+        baseline_pct=baseline_pct,
+        amplitude_pct=amplitude_pct,
+        t_peak_idx=t_peak_idx,
+        auc_pct=auc_pct,
+        fwhm_samples=fwhm_samples,
+        fwhm_seconds=(fwhm_samples * dt if np.isfinite(fwhm_samples) else np.nan),
+        n_humps=n_humps,
+        mean_inter_gulp_s=mean_inter_gulp_s,
+        mean_time_to_peak_s=mean_time_to_peak_s,
+        mean_time_to_dip_s=mean_time_to_dip_s,
+    )
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True)
+    ap.add_argument("--out", default="out_clean")
+    ap.add_argument("--denoise", action="store_true", help="Apply SWT denoising")
+    ap.add_argument("--wavelet", default="db2")
+    ap.add_argument("--level", type=int, default=3)
+    ap.add_argument("--zero-levels", default="1,2,3", help="Comma list, e.g. 1,2,3 or 2,3")
+    ap.add_argument("--sample-rate", type=float, default=30.0, help="Hz (for AUC/FWHM in seconds)")
+    ap.add_argument(
+        "--plot-channels",
+        action="store_true",
+        help="Generate per-(location,gulp) plots with all 6 channels (uses denoised signals if --denoise is set)",
+    )
+    ap.add_argument(
+        "--plot-channels-mode",
+        default="raw",
+        choices=["raw", "norm"],
+        help="Plot 'raw' filtered signals or 'norm' (Δ%% from baseline) per channel",
+    )
+    ap.add_argument(
+        "--debug-segments",
+        action="store_true",
+        help="Print a message when earlier repeated segment blocks are dropped and only the last contiguous block is used",
+    )
+
+    # (Optional) debug toggle for event overlays – you can set this True inside code if needed
+    # ap.add_argument("--debug-events", action="store_true", help="Overlay detected events on mean traces")
+
+    args = ap.parse_args()
+
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_base = outdir.name
+    out_suffix = out_base[len("out_test"):] if out_base.startswith("out_test") else ""
+    if out_suffix and not out_suffix.startswith("_"):
+        out_suffix = "_" + out_suffix
+
+    def suffixed_name(name: str, ext: str) -> str:
+        return f"{name}{out_suffix}.{ext}"
+
+    #df = pd.read_csv(args.csv, low_memory=False).ffill()
+    df = pd.read_csv(args.csv, low_memory=False)
+
+    # Normalize whitespace blanks
+    df["Activity"] = df["Activity"].astype(str).str.strip()
+    df["Environment"] = df["Environment"].astype(str).str.strip()
+
+    df["Activity"] = df["Activity"].replace("", np.nan)
+    df["Environment"] = df["Environment"].replace("", np.nan)
+
+    # Only ffill data columns, NOT Activity/Environment
+    data_cols = [c for c in df.columns if c.startswith('data_')]
+    df[data_cols] = df[data_cols].ffill()
+
+
+
+    # Detect labels
+    def norm_loc(x):
+        t = str(x).strip().lower()
+            
+        if "first right" in t: return "first right"
+        if "first left" in t: return "first left"
+        if "second right" in t: return "second right"
+        if "second left" in t: return "second left"
+        if "top" in t and "middle" in t: return "top middle"
+        if "bottom" in t and "middle" in t: return "bottom middle"
+
+        return t  # fallback
+
+    #def norm_gulp(x):
+      #  t = str(x).strip().lower()
+
+        # Effortful swallow: accept many variations
+      #  if "effortful" in t:
+      #      m = re.search(r"(\d+)", t)
+      #      return f"effortful swallow {m.group(1)}" if m else "effortful swallow"
+
+        # Masako: handle "masako", "masako maneuver", "masako attempt"
+      #  if "masako" in t:
+      #      m = re.search(r"(\d+)", t)
+      #      return f"masako maneuver {m.group(1)}" if m else "masako maneuver"
+
+        # 3 oz water: accept "3 oz", "3oz", "sip", "trial", parentheses, etc.
+     #   if ("3oz" in t or "3 oz" in t) and ("gulp" in t or "water" in t):
+      #      m = re.search(r"(\d+)", t)
+       #     return f"3oz water ({m.group(1)})" if m else "3oz water"
+        
+       # return ""
+
+   # df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
+   # df["_gulp"] = df["Activity"].map(norm_gulp) if "Activity" in df.columns else ""
+    
+
+
+    # ------------ NEW: task classification + gulp labeling ------------
+    def classify_task(x: str) -> str:
+        """Return coarse task type: 'effortful swallow', 'masako maneuver', '3oz water', or ''."""
+        t = str(x).strip().lower()
+        if "effortful" in t:
+            return "effortful swallow"
+        if "masako" in t:
+            return "masako maneuver"
+        if "oz" in t or "water" in t or "gulp" in t:
+            return "3oz water"
+        return ""
+
+    def norm_gulp_text(x: str) -> str:
+        """
+        Canonical label from Activity text **if it already contains a number**.
+        Otherwise, just return the task name (no number).
+        """
+        raw = str(x).strip().lower()
+        task = classify_task(raw)
+        if not task:
+            return ""
+
+        nums = re.findall(r"(\d+)", raw)
+        if not nums:
+            return task
+
+        if task == "3oz water":
+            # Ignore the leading "3" from "3oz" and use the trial number if present.
+            if len(nums) > 1:
+                n = nums[-1]
+            else:
+                return task
+        else:
+            n = nums[-1]
+
+        if task == "3oz water":
+            return f"3oz water ({n})"
+        return f"{task} {n}"
+
+    # Apply location + task classification
+    df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
+    df["task"] = df["Activity"].map(classify_task)
+
+    # First attempt: parse labels from text if numbers already exist (e.g., 'effortful swallow 3')
+    df["_gulp_raw"] = df["Activity"].map(norm_gulp_text)
+
+
+    # ---------- FIXED LOGIC: detect numbering ONLY if digits are NOT from '3oz' ----------
+
+
+
+
+    #has_true_numbers = df["_gulp_raw"].str.contains(
+        #r"(?:effortful swallow|masako maneuver|3oz water)\D*(\d+)", regex=True
+    #)
+
+    # ---------- TRUE numbering detection ----------
+    # A number counts as a real trial number *only if* it appears AFTER the task keyword.
+    # Numbers at the very beginning (e.g. "3oz gulp ...") are ignored.
+
+    # ---------- TRUE numbering detection ----------
+    def has_true_trial_number(label: str) -> bool:
+        t = str(label).strip().lower()
+
+        # For water trials, allow numbers inside parentheses (e.g. "3oz water (6)").
+        if t.startswith("3oz water"):
+            return bool(re.match(r"^3oz water\s*\(\s*(\d+)\s*\)$", t))
+
+        # For effortful/masako, the number must follow the task name.
+        return bool(re.match(r"^(effortful swallow|masako maneuver)\s+(\d+)$", t))
+
+    has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
+
+    if has_true_numbers.any():
+        # Case 1 — existing numbering found (keep it)
+        df["_gulp"] = df["_gulp_raw"]
+
+    else:
+        # ---------- AUTO-NUMBER BASED ON BLANK GAPS ----------
+
+        counters = defaultdict(int)
+        gulp_labels = []
+        prev_gap = True  # Force the first non-blank trial to start as #1
+
+        for task, loc, act, env in zip(
+            df["task"], 
+            df["_location"], 
+            df["Activity"], 
+            df["Environment"]
+        ):
+
+            # Blank row = both Activity AND Environment blank
+            if (str(act).strip() == "" or pd.isna(act)) and \
+               (str(env).strip() == "" or pd.isna(env)):
+                gulp_labels.append("")
+                prev_gap = True
+                continue
+
+            # Only number rows with a valid task + location
+            if task and loc:
+
+                # Start a NEW trial after every blank gap
+                if prev_gap:
+                    counters[task] += 1
+                if task == "3oz water":
+                    gulp_labels.append(f"3oz water ({counters[task]})")
+                else:
+                    gulp_labels.append(f"{task} {counters[task]}")
+                prev_gap = False
+            else:
+                gulp_labels.append("")
+                prev_gap = True
+
+        df["_gulp"] = gulp_labels
+
+
+
+
+    # Choose time and channel columns
+    time_col = (
+        "notificationTimestamp"
+        if "notificationTimestamp" in df.columns
+        else ("timestamp" if "timestamp" in df.columns else None)
+    )
+    channel_cols = [c for c in df.columns if c.startswith("data_")]
+    X = df[channel_cols].to_numpy(dtype=float)
+
+    # Optional SWT denoise
+    if args.denoise:
+        zl = tuple(int(x) for x in args.zero_levels.split(",") if x.strip())
+        X = swt_denoise_array(X, wavelet=args.wavelet, level=args.level, zero_levels=zl)
+        df[channel_cols] = X
+        df.to_csv(outdir / suffixed_name("denoised_signals", "csv"), index=False)
+
+    # Build monotonic local time per segment when plotting; metrics use dt=1/fs
+    fs = float(args.sample_rate)
+    dt = 1.0 / fs
+
+    # Helper: pick mode based on gulp label
+    # === CHANGED: this is how we choose peaks vs troughs ===
+    def gulp_mode(gname: str) -> str:
+        gl = str(gname).lower()
+        if "3oz water" in gl:
+            return "troughs_water"   # detect smaller/closer downward troughs for water trials
+        if "effortful swallow" in gl or "masako maneuver" in gl:
+            return "troughs" # count downward gulps
+        # Fallback: treat as peaks
+        return "peaks"
+
+    # Helper: compute consensus event count using majority voting with tie handling
+    def get_consensus_event_count(event_counts):
+        """
+        Given a list of event counts (integers), determine consensus using majority voting.
+        If tie, return concatenated string of tied counts (e.g., [1, 3, 1] -> "1" since 1 appears twice,
+        but [1, 3, 3] -> "3", and [1, 2, 3] -> "123" for a 3-way tie).
+        """
+        from collections import Counter
+        event_counts = [int(c) for c in event_counts if np.isfinite(c)]
+        if not event_counts:
+            return np.nan
+        counts = Counter(event_counts)
+        max_freq = max(counts.values())
+        tied_counts = sorted([c for c, freq in counts.items() if freq == max_freq])
+        return "".join(str(c) for c in tied_counts)
+
+    def last_contiguous_segment(df, mask):
+        idx = np.flatnonzero(mask.values)
+        if idx.size == 0:
+            return df.iloc[0:0]
+        breaks = np.where(np.diff(idx) != 1)[0]
+        start = idx[breaks[-1] + 1] if breaks.size else idx[0]
+        return df.iloc[idx[idx >= start]]
+
+    def get_last_segment(loc, g):
+        mask = (df["_location"] == loc) & (df["_gulp"] == g)
+        seg = last_contiguous_segment(df, mask)
+        if args.debug_segments:
+            all_count = int(mask.sum())
+            last_count = len(seg)
+            if all_count > last_count:
+                print(
+                    f"DEBUG: Dropped earlier repeated segments for {loc} / {g}: "
+                    f"{all_count - last_count} rows removed, keeping last contiguous {last_count} rows"
+                )
+        return seg
+
+    # === Compute per-segment metrics (mean across channels + channel-wise) ===
+    rows = []
+    locations = [
+        v
+        for v in ["top middle", "bottom middle", "first right", "first left", "second right", "second left"]
+        if (df["_location"] == v).any()
+    ]
+
+    # --- Build gulp lists for all three task types ---
+    effortful = [f"effortful swallow {i}" for i in range(1, 100)]
+    masako = [f"masako maneuver {i}" for i in range(1, 100)]
+    water = [f"3oz water ({i})" for i in range(1, 100)]
+
+    gulps = []
+    for pattern_list in [effortful, masako, water]:
+        #gulps.extend([g for g in pattern_list if (df["Activity"].str.lower() == g.lower()).any()])
+        for g in pattern_list:
+            if (df["_gulp"] == g).any():
+                gulps.append(g)
+
+    print(f"Detected gulps: {gulps}")
+
+    for loc in locations:
+        for g in gulps:
+            seg = get_last_segment(loc, g)
+            if len(seg) < 5:
+                continue
+
+            mode = gulp_mode(g)  # === CHANGED: choose peaks vs troughs here ===
+
+            Y = seg[channel_cols].to_numpy(float)
+            ymean = np.nanmean(Y, axis=1)
+            ymean_pct, _ = normalize_percent(ymean)
+            m = seg_metrics(ymean_pct, dt=dt, mode=mode)
+
+            rows.append(dict(location=loc, gulp=g, channel="mean", n=len(seg), mode=mode, **m))
+
+            # channel-wise too
+            for i, cname in enumerate(channel_cols):
+                ypc, _ = normalize_percent(Y[:, i])
+                m_ch = seg_metrics(ypc, dt=dt, mode=mode)
+                rows.append(dict(location=loc, gulp=g, channel=cname, n=len(seg), mode=mode, **m_ch))
+
+    if not rows:
+        print("⚠️ No rows to compute — likely no matching gulps/locations.")
+        return
+
+    metrics = pd.DataFrame(rows)
+
+    # === NEW: Compute consensus event count for each (location, gulp) pair ===
+    consensus_dict = {}
+    for (loc, g), group in metrics.groupby(['location', 'gulp']):
+        # Get all per-channel event counts (excluding the "mean" channel)
+        channel_events = group[group['channel'] != 'mean']['n_humps'].values
+        consensus = get_consensus_event_count(channel_events)
+        consensus_dict[(loc, g)] = consensus
+    
+    # Add consensus field to all rows
+    metrics['consensus_event_count'] = metrics.apply(
+        lambda row: consensus_dict.get((row['location'], row['gulp']), np.nan),
+        axis=1
+    )
+
+    # gives me a warning if my file is still open/can't be accessed
+    csv_path = outdir / suffixed_name("metrics_pct", "csv")
+    for _ in range(3):
+        try:
+            metrics.to_csv(csv_path, index=False)
+            break
+        except PermissionError:
+            print("⚠️ File is in use, retrying in 2 seconds...")
+            time.sleep(2)
+    else:
+        print(f"❌ Could not write {csv_path}, file may be locked by another program.")
+
+    if metrics.empty:
+        print("⚠️ No metrics computed — likely no matching gulps or locations. Skipping pivot tables.")
+        return
+    else:
+        # === Pivot tables (what you asked to compare) ===
+        mean_only = metrics[metrics["channel"] == "mean"].copy()
+        amp_tbl = mean_only.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean")
+        auc_tbl = mean_only.pivot_table(index="location", columns="gulp", values="auc_pct", aggfunc="mean")
+        amp_tbl.to_csv(outdir / suffixed_name("pivot_mean_amplitude_pct_by_loc_gulp", "csv"))
+        auc_tbl.to_csv(outdir / suffixed_name("pivot_mean_auc_pct_by_loc_gulp", "csv"))
+
+    # === Quick overlays (normalized mean) ===
+    def time_axis_for(seg):
+        if time_col is None:
+            return np.arange(len(seg))
+        t = monotonic_local_time(seg[time_col])
+        return t if t is not None else np.arange(len(seg))
+
+    # Helper function to generate overlay plots for a filtered set of gulps
+    def generate_overlay_plots(filtered_gulps, task_name):
+        """Generate overlay plots for a specific task type (e.g., 'effortful swallow' or 'masako maneuver')."""
+        for loc in locations:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            any_plot = False
+            for g in filtered_gulps:
+                seg = get_last_segment(loc, g)
+                if len(seg) < 5:
+                    continue
+                t = time_axis_for(seg)
+                Y = seg[channel_cols].to_numpy(float)
+                ymean = np.nanmean(Y, axis=1)
+                ypc, _ = normalize_percent(ymean)
+                ax.plot(t, ypc, label=g)
+                any_plot = True
+            if any_plot:
+                ax.set_title(f"{loc.title()} — {task_name} Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+                ax.set_xlabel("Data Point Index")
+                ax.set_ylabel("Percent Change (Δ%) from Baseline")
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+                fig.tight_layout()
+                fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_norm{suffixed_name('', 'png')}", dpi=150, bbox_inches='tight')
+                plt.close(fig)
+
+    # Generate separate overlays for effortful swallows and masako maneuvers
+    effortful_gulps = [g for g in gulps if "effortful swallow" in g]
+    masako_gulps = [g for g in gulps if "masako maneuver" in g]
+    
+    if effortful_gulps:
+        generate_overlay_plots(effortful_gulps, "Effortful Swallow")
+    
+    if masako_gulps:
+        generate_overlay_plots(masako_gulps, "Masako Maneuver")
+
+        # === Locations overlay plots directory ===
+        locations_overlay_dir = outdir / "Locations Overlay"
+        locations_overlay_dir.mkdir(parents=True, exist_ok=True)
+
+        # per gulp: overlay locations
+        for g in gulps:
+            plt.figure(figsize=(10, 4))
+            any_plot = False
+            for loc2 in locations:
+                seg = get_last_segment(loc2, g)
+                if len(seg) < 5:
+                    continue
+                t = time_axis_for(seg)
+                Y = seg[channel_cols].to_numpy(float)
+                ymean = np.nanmean(Y, axis=1)
+                ypc, _ = normalize_percent(ymean)
+                plt.plot(t, ypc, label=loc2)
+                any_plot = True
+            if any_plot:
+                plt.title(f"{g.title()} — Locations Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+                plt.xlabel("Data Point Index")
+                plt.ylabel("Percent Change (Δ%) from Baseline")
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(locations_overlay_dir / f"{g.replace(' ', '_')}_locations_overlay_norm{suffixed_name('', 'png')}", dpi=150)
+                plt.close()
+
+    # === NEW-ish: Per-(location, gulp) plots showing all 6 channels ===
+    def slug(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+    channel_cols = [c for c in df.columns if c.startswith("data_")]
+
+    def _time_axis_for(seg):
+        try:
+            return time_axis_for(seg)
+        except NameError:
+            return np.arange(len(seg), dtype=float)
+
+    if args.plot_channels:
+        chan_dir = outdir / "channel_plots"
+        chan_dir.mkdir(parents=True, exist_ok=True)
+
+        for loc in locations:
+            for g in gulps:
+                seg = get_last_segment(loc, g)
+                if len(seg) < 5:
+                    continue
+
+                t = _time_axis_for(seg)
+                Y = seg[channel_cols].to_numpy(dtype=float)
+
+                fig, ax = plt.subplots(figsize=(10, 4))
+
+                if args.plot_channels_mode == "norm":
+                    for i, cname in enumerate(channel_cols):
+                        y = Y[:, i]
+                        n = len(y)
+                        b_len = max(20, int(0.1 * n))
+                        b = float(np.nanmedian(y[:b_len])) if n > 0 else np.nan
+                        ypc = (
+                            np.full_like(y, np.nan, dtype=float)
+                            if (not np.isfinite(b) or b == 0)
+                            else (y - b) / b * 100.0
+                        )
+                        ax.plot(t, ypc, label=cname)
+                    ax.set_ylabel("Percent Change (Δ%) from Baseline")
+                    suffix = "norm"
+                else:
+                    for i, cname in enumerate(channel_cols):
+                        ax.plot(t, Y[:, i], label=cname)
+                    ax.set_ylabel("Signal (a.u.)")
+                    suffix = "raw"
+
+                ax.set_title(f"{loc.title()} — {g.title()} (6 channels, {args.plot_channels_mode}, {'SWT' if args.denoise else 'raw'}, {len(seg)} Samples)")
+                ax.set_xlabel("Data Point Index")
+                ax.legend(ncol=3, fontsize=8)
+                fig.tight_layout()
+                fig.savefig(
+                    chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}{out_suffix}.png", dpi=150
+                )
+                plt.close(fig)
+
+
+        # === NEW: per-trial 6-channel plot INCLUDING event counts ===
+    chan_dir2 = outdir / "channel_plots_with_events"
+    chan_dir2.mkdir(parents=True, exist_ok=True)
+
+    for loc in locations:
+        for g in gulps:
+            seg = get_last_segment(loc, g)
+            if len(seg) < 5:
+                continue
+
+            mode = gulp_mode(g)  # auto peak/trough selection
+            t = time_axis_for(seg)
+            Y = seg[channel_cols].to_numpy(float)
+
+            # Get consensus event count for this trial
+            consensus = consensus_dict.get((loc, g), np.nan)
+
+            fig, ax = plt.subplots(figsize=(10, 4))
+
+            # === NEW: Detect events on the normalized mean signal ===
+            ymean = np.nanmean(Y, axis=1)
+            ymean_pct, _ = normalize_percent(ymean)
+            yb = ymean_pct - np.nanmedian(ymean_pct[:max(20, int(0.1 * len(ymean_pct)))])
+            std = np.nanstd(yb) if np.isfinite(np.nanstd(yb)) else 0.0
+            
+            # Detect events based on mode
+            if mode == "troughs":
+                events, props = find_peaks(
+                    -yb,
+                    height=std * 1.0,
+                    prominence=std * 2.0,
+                    distance=int(0.6 / dt) if dt > 0 else 3,
+                )
+            elif mode == "troughs_water":
+                events, props = find_peaks(
+                    -yb,
+                    height=std * 0.4,
+                    prominence=std * 0.4,
+                    distance=int(0.4 / dt) if dt > 0 else 3,
+                )
+            else:
+                events, props = find_peaks(
+                    yb,
+                    height=std * 0.25,
+                    prominence=std * 0.25,
+                    distance=int(0.6 / dt) if dt > 0 else 3,
+                )
+
+            # Get trough boundaries for each event (use more permissive trough detection for water)
+            troughs_prom = (std * 0.4) if (mode == "troughs_water" and std > 0) else (std * 1.0 if std > 0 else 0.0)
+            troughs_all, _ = find_peaks(
+                -yb,
+                prominence=troughs_prom,
+                distance=int(0.6 / dt) if dt > 0 else 3,
+            )
+            
+            # For each event, find a local boundary centered around that event using
+            # midpoints to neighboring troughs so each event gets its own window.
+            event_bounds = []
+            troughs = np.asarray(troughs_all, dtype=int)
+            for ev in events:
+                ev = int(ev)
+                # find insertion position in troughs array
+                if troughs.size == 0:
+                    # fallback: small window around event
+                    left = max(0, ev - 1)
+                    right = min(len(yb) - 1, ev + 1)
+                else:
+                    # find index of nearest trough equal to ev, or insertion point
+                    pos = np.searchsorted(troughs, ev)
+                    # previous trough index
+                    if pos > 0:
+                        prev_idx = troughs[pos - 1]
+                    else:
+                        prev_idx = None
+                    # next trough index
+                    if pos < troughs.size:
+                        # if exact match at pos, that's the current trough
+                        if troughs[pos] == ev:
+                            # use neighbors for midpoints
+                            prev_idx = troughs[pos - 1] if pos - 1 >= 0 else None
+                            next_idx = troughs[pos + 1] if pos + 1 < troughs.size else None
+                        else:
+                            next_idx = troughs[pos]
+                    else:
+                        next_idx = None
+
+                    # compute left/right as midpoints between adjacent troughs and the event
+                    if prev_idx is not None:
+                        left = int(np.floor((prev_idx + ev) / 2))
+                    else:
+                        # no previous trough: take midpoint to next or small window
+                        if next_idx is not None:
+                            left = int(np.floor((ev + next_idx) / 2)) - (next_idx - ev)
+                            left = max(0, left)
+                        else:
+                            left = max(0, ev - 1)
+
+                    if next_idx is not None:
+                        right = int(np.ceil((ev + next_idx) / 2))
+                    else:
+                        if prev_idx is not None:
+                            right = int(np.ceil((prev_idx + ev) / 2)) + (ev - prev_idx)
+                            right = min(len(yb) - 1, right)
+                        else:
+                            right = min(len(yb) - 1, ev + 1)
+
+                # ensure bounds valid
+                left = max(0, int(left))
+                right = min(len(yb) - 1, int(right))
+
+                # Find the extremum (minimum for troughs, maximum for peaks) inside this local window
+                event_region = yb[left : right + 1]
+                if event_region.size == 0:
+                    extremum_idx = ev
+                else:
+                    if mode in ("troughs", "troughs_water"):
+                        extremum_local_idx = int(np.nanargmin(event_region))
+                    else:
+                        extremum_local_idx = int(np.nanargmax(event_region))
+                    extremum_idx = left + extremum_local_idx
+
+                # Calculate 10% margin around the extremum with a minimum width
+                event_width = max(3, right - left)
+                margin = max(1, int(0.1 * event_width))
+                highlight_start_idx = max(0, extremum_idx - margin)
+                highlight_end_idx = min(len(yb) - 1, extremum_idx + margin)
+
+                event_bounds.append((highlight_start_idx, highlight_end_idx))
+
+            # Plot each channel with event-count labeling
+            for i, cname in enumerate(channel_cols):
+                y = Y[:, i]
+                ypc, _ = normalize_percent(y)
+                metrics_ch = seg_metrics(ypc, dt=dt, mode=mode)
+                n_events = metrics_ch["n_humps"]
+
+                label = f"Channel {i} / {n_events}"
+                ax.plot(t, ypc, label=label, linewidth=1)
+
+            # === NEW: Add transparent rectangles for detected events ===
+            for t_start_idx, t_end_idx in event_bounds:
+                ax.axvspan(t[t_start_idx], t[t_end_idx], alpha=0.15, color='violet', zorder=0)
+            # Display mean-signal event count (using same seg_metrics pipeline)
+            m_mean = seg_metrics(ymean_pct, dt=dt, mode=mode)
+            mean_n = m_mean.get("n_humps", np.nan)
+
+            ax.set_title(f"{loc.title()} — {g.title()} — {mode.title()} Detection (All Channels, {len(seg)} Samples)")
+            ax.set_xlabel("Data Point Index")
+            ax.set_ylabel("Percent Change (Δ%) from Baseline")
+
+            # Put mean-signal event count at top-right inside axes
+            mean_text = f"Mean signal: {int(mean_n) if np.isfinite(mean_n) else 'N/A'}"
+            ax.text(
+                0.98,
+                0.98,
+                mean_text,
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+            )
+
+            consensus_str = str(consensus) if pd.notna(consensus) else "N/A"
+            ax.legend(title=f"Channel / Events (Consensus: {consensus_str})", title_fontsize=9, fontsize=8, ncol=2, loc="lower right")
+            fig.tight_layout()
+
+            fig.savefig(
+                chan_dir2 / f"{slug(loc)}_{slug(g)}_channels_with_events{out_suffix}.png",
+                dpi=150
+            )
+            plt.close(fig)
+
+    # === NEW: Create summary table with trial-level consensus event counts ===
+    summary_rows = []
+    for (loc, g), group in metrics.groupby(['location', 'gulp']):
+        consensus = group['consensus_event_count'].iloc[0]  # Same for all rows in group
+        summary_rows.append({
+            'location': loc,
+            'trial': g,
+            'consensus_event_count': consensus
+        })
+    
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_csv(outdir / suffixed_name("trial_consensus_event_counts", "csv"), index=False)
+
+    print("Done. Outputs (of effortful) in:", outdir.as_posix())
+
+
+if __name__ == "__main__":
+    main()
+    
