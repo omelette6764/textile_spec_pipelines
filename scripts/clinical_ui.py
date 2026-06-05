@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 """
-make_clinical_ui_mockup.py
+clinical_ui.py
 
-Generates a clinician/patient-facing UI mockup figure from your BTVIZ CSV and metrics CSV.
+Generates a clinician/patient-facing UI mockup figure with two modes:
 
-Default behavior reproduces the "CARDUI9" style mockup:
+MODE A (Standalone):
+  python scripts/clinical_ui.py \
+    --csv raw_data/BTVIZ_2026-05-19_3oz_water_first_5.csv \
+    --location "first right" \
+    --trial "3oz water (1)" \
+    --out mockup.png
+
+MODE B (Pipeline mode - recommended):
+  python scripts/clinical_ui.py \
+    --denoised outputs/out_test_10_water_5_19_26/denoised_signals_10_water_5_19_26.csv \
+    --metrics outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
+    --location "first right" \
+    --trial "3oz water (1)" \
+    --out mockup.png
+
+Features:
 - labeled-window-only x-axis (dotted bounds on both sides)
 - trough detection on detrended MEAN trace (rolling median)
 - primary trough = most prominent detrended trough
 - local troughs = closest 6 in the last 25s before primary
 - per-channel Δ% traces + rolling baseline line
 - right-side cards with zebra rows and baseline "pill" at top-right of Channels card
-
-Example:
-python scripts/mockup_UI.py \
-  --csv data/BTVIZ_2025-11-03_effortful_swallow_and_masako_maneuver_and_water.csv \
-  --metrics data/metrics_pct_of_effortful.csv \
-  --location "first right" \
-  --trial "3oz water (3)" \
-  --out out/clinical_ui_first_right_3oz_water_3_CLOSEST_CARDUI9.png
 """
 
 import argparse
@@ -163,9 +170,14 @@ def add_zebra_kv(ax, x, y, w, h, rows, font=10.6, key_w=0.56, pad=0.02):
 # Main generator
 # ----------------------------
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True, help="Path to raw BTVIZ CSV")
-    ap.add_argument("--metrics", required=False, default=None, help="Path to metrics_pct_of_effortful.csv (optional)")
+    ap = argparse.ArgumentParser(
+        description="Clinical UI mockup generator with support for standalone and pipeline modes."
+    )
+    # Input selection (mutually exclusive patterns)
+    ap.add_argument("--csv", required=False, default=None, help="Path to raw BTVIZ CSV (standalone mode)")
+    ap.add_argument("--denoised", required=False, default=None, help="Path to denoised_signals_*.csv from process_effortful (pipeline mode)")
+    ap.add_argument("--metrics", required=False, default=None, help="Path to metrics_pct_*.csv (optional, for enhanced pipeline cards)")
+    
     ap.add_argument("--location", default="first right")
     ap.add_argument("--trial", default="3oz water (3)")
     ap.add_argument("--out", default="clinical_ui_mockup.png")
@@ -183,54 +195,73 @@ def main():
     ap.add_argument("--smooth_k", type=int, default=5)
     args = ap.parse_args()
 
-    csv_path = args.csv
-    metrics_csv = args.metrics
+    # Determine mode: pipeline (denoised) vs standalone (raw CSV)
+    if args.denoised:
+        # Pipeline mode: load denoised signals (already processed by process_effortful)
+        print("MODE: Pipeline (using process_effortful denoised outputs)")
+        df = pd.read_csv(args.denoised, low_memory=False)
+        use_pipeline_mode = True
+    elif args.csv:
+        # Standalone mode: load raw CSV and apply label parsing
+        print("MODE: Standalone (using raw CSV)")
+        df = pd.read_csv(args.csv, low_memory=False)
+        use_pipeline_mode = False
+    else:
+        raise RuntimeError("Must provide either --csv (standalone mode) or --denoised (pipeline mode)")
+
     fs = float(args.fs)
     dt = 1.0 / fs
+    metrics_csv = args.metrics
 
-    df = pd.read_csv(csv_path, low_memory=False)
-
-    # Clean labels, ffill only data columns
-    for col in ["Activity", "Environment"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace("", np.nan)
-
+    # Channel columns
     channel_cols = [c for c in df.columns if c.startswith("data_")]
     if not channel_cols:
         raise RuntimeError("No channel columns found (expected columns starting with 'data_').")
 
-    df[channel_cols] = df[channel_cols].ffill()
+    # In standalone mode: clean labels and compute _location / _gulp
+    if not use_pipeline_mode:
+        # Clean labels, ffill only data columns
+        for col in ["Activity", "Environment"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                df[col] = df[col].replace("", np.nan)
 
-    # Build _location and _gulp exactly like the earlier logic
-    df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
-    df["task"] = df["Activity"].map(classify_task)
-    df["_gulp_raw"] = df["Activity"].map(norm_gulp_text)
+        df[channel_cols] = df[channel_cols].ffill()
 
-    has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
-    if has_true_numbers.any():
-        df["_gulp"] = df["_gulp_raw"]
+        # Build _location and _gulp exactly like the earlier logic
+        df["_location"] = df["Environment"].map(norm_loc) if "Environment" in df.columns else ""
+        df["task"] = df["Activity"].map(classify_task)
+        df["_gulp_raw"] = df["Activity"].map(norm_gulp_text)
+
+        has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
+        if has_true_numbers.any():
+            df["_gulp"] = df["_gulp_raw"]
+        else:
+            counters = defaultdict(int)
+            gulp_labels = []
+            prev_gap = True
+            for task, loc, act, env in zip(df["task"], df["_location"], df["Activity"], df["Environment"]):
+                if (str(act).strip() == "" or pd.isna(act)) and (str(env).strip() == "" or pd.isna(env)):
+                    gulp_labels.append("")
+                    prev_gap = True
+                    continue
+
+                if task and loc:
+                    if prev_gap:
+                        counters[task] += 1
+                    gulp_labels.append(f"{task} {counters[task]}")
+                    prev_gap = False
+                else:
+                    gulp_labels.append("")
+                    prev_gap = True
+
+            df["_gulp"] = gulp_labels
     else:
-        counters = defaultdict(int)
-        gulp_labels = []
-        prev_gap = True
-        for task, loc, act, env in zip(df["task"], df["_location"], df["Activity"], df["Environment"]):
-            if (str(act).strip() == "" or pd.isna(act)) and (str(env).strip() == "" or pd.isna(env)):
-                gulp_labels.append("")
-                prev_gap = True
-                continue
+        # In pipeline mode: _location and _gulp should already exist in denoised CSV
+        if "_location" not in df.columns or "_gulp" not in df.columns:
+            raise RuntimeError("Pipeline mode requires _location and _gulp columns in denoised_signals CSV. Ensure process_effortful was run with proper output.")
 
-            if task and loc:
-                if prev_gap:
-                    counters[task] += 1
-                gulp_labels.append(f"{task} {counters[task]}")
-                prev_gap = False
-            else:
-                gulp_labels.append("")
-                prev_gap = True
-
-        df["_gulp"] = gulp_labels
-
+    # Normalize trial arguments for matching
     loc = normalize_label_text(args.location)
     trial = normalize_label_text(args.trial)
 
@@ -239,6 +270,7 @@ def main():
         if m:
             trial = f"3oz water ({m[-1]})"
 
+    # Extract segment matching location and trial
     seg = df[(df["_location"] == loc) & (df["_gulp"].astype(str).str.strip().str.lower() == trial)].copy()
     if seg.empty:
         raise RuntimeError(f"No rows found for location='{loc}' and trial='{trial}'. Check labels in CSV.")
@@ -442,10 +474,11 @@ def main():
     sx, sy, sw, sh = 0.02, 0.48, 0.96, 0.30
     add_card(axr, sx, sy, sw, sh, "Summary metrics", title_pad_frac=0.20)
 
+    segmentation_label = "B (process_effortful pipeline)" if use_pipeline_mode else "A (labeled rows only)"
     rows1 = [
         ("Task", args.trial),
         ("Location", args.location),
-        ("Segmentation", "A (labeled rows only)"),
+        ("Segmentation", segmentation_label),
         ("Plot window", "labeled window only"),
         ("Local select", f"{args.local_n} closest within last {args.local_window_s:.0f}s pre-primary"),
         ("Trough detection", "detrended mean"),
@@ -490,21 +523,27 @@ def main():
     add_card(axr, mx, my, mw, mh, "From pipeline (mean trace)", title_pad_frac=0.24)
 
     pipe = {"Amplitude (Δ%)": "—", "AUC (Δ%·s)": "—", "FWHM (s)": "—", "n_humps (pipeline)": "—"}
+    
+    # In pipeline mode or if metrics CSV provided: populate from metrics
     if metrics_csv and os.path.exists(metrics_csv):
-        mm = pd.read_csv(metrics_csv)
-        mrow = mm[
-            (mm["location"].astype(str).str.lower() == loc) &
-            (mm["gulp"].astype(str).str.lower() == trial) &
-            (mm["channel"].astype(str) == "mean")
-        ]
-        if len(mrow):
-            r = mrow.iloc[0]
-            pipe = {
-                "Amplitude (Δ%)": f"{float(r.get('amplitude_pct', np.nan)):.2f}" if np.isfinite(r.get("amplitude_pct", np.nan)) else "—",
-                "AUC (Δ%·s)": f"{float(r.get('auc_pct', np.nan)):.2f}" if np.isfinite(r.get("auc_pct", np.nan)) else "—",
-                "FWHM (s)": f"{float(r.get('fwhm_seconds', np.nan)):.2f}" if np.isfinite(r.get("fwhm_seconds", np.nan)) else "—",
-                "n_humps (pipeline)": f"{int(r.get('n_humps', 0))}" if np.isfinite(r.get("n_humps", np.nan)) else "—",
-            }
+        try:
+            mm = pd.read_csv(metrics_csv)
+            # Match location and trial (handling case-insensitivity and whitespace)
+            mrow = mm[
+                (mm["location"].astype(str).str.lower().str.strip() == loc.lower()) &
+                (mm["gulp"].astype(str).str.lower().str.strip() == trial.lower()) &
+                (mm["channel"].astype(str) == "mean")
+            ]
+            if len(mrow) > 0:
+                r = mrow.iloc[0]
+                pipe = {
+                    "Amplitude (Δ%)": f"{float(r.get('amplitude_pct', np.nan)):.2f}" if np.isfinite(r.get("amplitude_pct", np.nan)) else "—",
+                    "AUC (Δ%·s)": f"{float(r.get('auc_pct', np.nan)):.2f}" if np.isfinite(r.get("auc_pct", np.nan)) else "—",
+                    "FWHM (s)": f"{float(r.get('fwhm_seconds', np.nan)):.2f}" if np.isfinite(r.get("fwhm_seconds", np.nan)) else "—",
+                    "n_humps (pipeline)": f"{int(r.get('n_humps', 0))}" if np.isfinite(r.get("n_humps", np.nan)) else "—",
+                }
+        except Exception as e:
+            print(f"⚠️ Could not read metrics CSV ({metrics_csv}): {e}")
 
     rows4 = list(pipe.items())
     add_zebra_kv(axr, mx + 0.02 * mw, my + 0.15 * mh, mw * 0.96, mh * 0.68, rows4, font=10.2, key_w=0.62)
