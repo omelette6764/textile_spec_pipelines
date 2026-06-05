@@ -372,8 +372,8 @@ def main():
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(14.5, 6.8), facecolor="#EAF6F8")
-    gs = fig.add_gridspec(1, 2, width_ratios=[2.55, 1.05], wspace=0.08)
+    fig = plt.figure(figsize=(17, 6.8), facecolor="#EAF6F8")
+    gs = fig.add_gridspec(1, 2, width_ratios=[2.55, 1.05], wspace=0.06)
 
     # Left plot
     ax = fig.add_subplot(gs[0, 0])
@@ -426,8 +426,8 @@ def main():
         fontsize=12,
         color="#1A202C",
     )
-    ax.set_xlabel("time (a.u.)")
-    ax.set_ylabel("Δ% from baseline")
+    ax.set_xlabel("Data Point Index")
+    ax.set_ylabel("Percent Change (Δ%) from Baseline")
     ax.grid(True, alpha=0.15)
 
     # Right panel
@@ -435,13 +435,22 @@ def main():
     axr.axis("off")
     axr.set_facecolor("#EAF6F8")
 
+    pos = axr.get_position()
+
+    axr.set_position([
+        pos.x0,
+        pos.y0 - 0.04,
+        pos.width,
+        pos.height + 0.2
+    ])
+
     # Channels card
-    cx, cy, cw, ch = 0.02, 0.80, 0.96, 0.17
-    add_card(axr, cx, cy, cw, ch, "Channels", face="#D7ECFB", edge="#B6D9F7", title_pad_frac=0.22)
+    cx, cy, cw, ch = 0.01, 0.84, 0.97, 0.12
+    add_card(axr, cx, cy, cw, ch, "Channels", face="#D7ECFB", edge="#B6D9F7", title_pad_frac=0.16)
 
     # Two columns, two entries per row
     sw_x1 = cx + 0.06 * cw
-    sw_x2 = cx + 0.55 * cw
+    sw_x2 = cx + 0.35 * cw
     start_y = cy + 0.62 * ch
     dy = 0.20 * ch
 
@@ -456,9 +465,9 @@ def main():
 
     # Rolling baseline pill at far top-right of Channels card (same header row)
     pill_text = f"rolling baseline\n(median, {win_s:.1f}s)"
-    pill_w = 0.36 * cw
+    pill_w = 0.30 * cw
     pill_h = 0.34 * ch
-    pill_x = cx + cw - pill_w - 0.04 * cw
+    pill_x = cx + cw - pill_w - 0.02 * cw
     pill_y = cy + ch - pill_h - 0.08 * ch
     pill = FancyBboxPatch(
         (pill_x, pill_y), pill_w, pill_h,
@@ -471,31 +480,31 @@ def main():
     axr.text(pill_x + 0.06 * pill_w, pill_y + 0.55 * pill_h, pill_text, fontsize=9.6, color="#1A202C", va="center")
 
     # Summary metrics card
-    sx, sy, sw, sh = 0.02, 0.48, 0.96, 0.30
-    add_card(axr, sx, sy, sw, sh, "Summary metrics", title_pad_frac=0.20)
+    sx, sy, sw, sh = 0.01, 0.51, 0.97, 0.30
+    add_card(axr, sx, sy, sw, sh, "Summary metrics", title_pad_frac=0.08)
 
-    segmentation_label = "B (process_effortful pipeline)" if use_pipeline_mode else "A (labeled rows only)"
+    segmentation_label = "Mode B" if use_pipeline_mode else "A (labeled rows only)"
     rows1 = [
         ("Task", args.trial),
         ("Location", args.location),
         ("Segmentation", segmentation_label),
         ("Plot window", "labeled window only"),
-        ("Local select", f"{args.local_n} closest within last {args.local_window_s:.0f}s pre-primary"),
+        ("Local select", f"{args.local_n} in <{args.local_window_s:.0f}s pre-primary"),
         ("Trough detection", "detrended mean"),
         ("Detrend", f"rolling median {win_s:.1f} s"),
     ]
-    add_zebra_kv(axr, sx + 0.02 * sw, sy + 0.10 * sh, sw * 0.96, sh * 0.72, rows1, font=10.6, key_w=0.52)
+    add_zebra_kv(axr, sx + 0.01 * sw, sy + 0.10 * sh, sw * 0.98, sh * 0.72, rows1, font=10.6, key_w=0.48)
     axr.text(
-        sx + 0.04 * sw,
+        sx + 0.02 * sw,
         sy + 0.03 * sh,
         f"find_peaks: prom {args.prom_mad0:.2f}×MAD₀, height {args.height_mad0:.2f}×MAD₀, min_sep {args.min_sep_s:.1f}s",
-        fontsize=9.6,
+        fontsize=7.5,
         color="#4A5568"
     )
 
     # Trough summary card (padding so title doesn't overlap first row)
-    tx, ty, tw, th = 0.02, 0.30, 0.96, 0.15
-    add_card(axr, tx, ty, tw, th, "Trough summary", title_pad_frac=0.22)
+    tx, ty, tw, th = 0.01, 0.33, 0.97, 0.154
+    add_card(axr, tx, ty, tw, th, "Trough summary", title_pad_frac=0.08)
 
     rows2 = [
         ("Troughs (labeled window)", len(trough_idx)),
@@ -503,11 +512,11 @@ def main():
         ("Inter-trough mean (s)", f"{inter_mean:.2f}" if np.isfinite(inter_mean) else "—"),
         ("Inter-trough CoV", f"{inter_cov:.2f}" if np.isfinite(inter_cov) else "—"),
     ]
-    add_zebra_kv(axr, tx + 0.02 * tw, ty + 0.12 * th, tw * 0.96, th * 0.70, rows2, font=10.6, key_w=0.60)
+    add_zebra_kv(axr, tx + 0.01 * tw, ty + 0.10 * th, tw * 0.98, th * 0.68, rows2, font=10.6, key_w=0.6)
 
     # Primary gulp metrics card
-    px, py, pw, ph = 0.02, 0.11, 0.96, 0.18
-    add_card(axr, px, py, pw, ph, "Primary gulp metrics (detrended)", title_pad_frac=0.22)
+    px, py, pw, ph = 0.01, 0.16, 0.97, 0.16
+    add_card(axr, px, py, pw, ph, "Primary gulp metrics (detrended)", title_pad_frac=0.12)
 
     rows3 = [
         ("Depth", f"{primary_metrics['depth']:.2f}"),
@@ -516,11 +525,11 @@ def main():
         ("Recovery time (s)", f"{primary_metrics['recovery']:.2f}"),
         ("Time below half-depth (s)", f"{primary_metrics['time_below_half']:.2f}"),
     ]
-    add_zebra_kv(axr, px + 0.02 * pw, py + 0.12 * ph, pw * 0.96, ph * 0.70, rows3, font=10.6, key_w=0.62)
+    add_zebra_kv(axr, px + 0.01 * pw, py + 0.10 * ph, pw * 0.98, ph * 0.74, rows3, font=10.6, key_w=0.60)
 
     # From pipeline (mean trace) card
-    mx, my, mw, mh = 0.02, 0.01, 0.96, 0.09
-    add_card(axr, mx, my, mw, mh, "From pipeline (mean trace)", title_pad_frac=0.24)
+    mx, my, mw, mh = 0.01, 0.025, 0.97, 0.125
+    add_card(axr, mx, my, mw, mh, "From pipeline (mean trace)", title_pad_frac=0.10)
 
     pipe = {"Amplitude (Δ%)": "—", "AUC (Δ%·s)": "—", "FWHM (s)": "—", "n_humps (pipeline)": "—"}
     
@@ -546,7 +555,7 @@ def main():
             print(f"⚠️ Could not read metrics CSV ({metrics_csv}): {e}")
 
     rows4 = list(pipe.items())
-    add_zebra_kv(axr, mx + 0.02 * mw, my + 0.15 * mh, mw * 0.96, mh * 0.68, rows4, font=10.2, key_w=0.62)
+    add_zebra_kv(axr, mx + 0.01 * mw, my + 0.14 * mh, mw * 0.98, mh * 0.76, rows4, font=10.2, key_w=0.50)
 
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
     print(f"Saved: {out_path.resolve()}")
