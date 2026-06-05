@@ -10,6 +10,8 @@
 #   python process_effortful.py --csv "BTVIZ_2026-05-20_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_20_26
 
 #   python process_effortful.py --csv "BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_30_masako_effortful_5_27_26
+#   python process_effortful.py --csv "BTVIZ_2026-05-28_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_5_28_26
+#   python process_effortful.py --csv "BTVIZ_2026-06-05_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_test_10_water_6_5_26
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out out_clean
 
@@ -238,6 +240,14 @@ def main():
 
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
+    out_base = outdir.name
+    out_suffix = out_base[len("out_test"):] if out_base.startswith("out_test") else ""
+    if out_suffix and not out_suffix.startswith("_"):
+        out_suffix = "_" + out_suffix
+
+    def suffixed_name(name: str, ext: str) -> str:
+        return f"{name}{out_suffix}.{ext}"
+
     #df = pd.read_csv(args.csv, low_memory=False).ffill()
     df = pd.read_csv(args.csv, low_memory=False)
 
@@ -424,7 +434,7 @@ def main():
         zl = tuple(int(x) for x in args.zero_levels.split(",") if x.strip())
         X = swt_denoise_array(X, wavelet=args.wavelet, level=args.level, zero_levels=zl)
         df[channel_cols] = X
-        df.to_csv(outdir / "denoised_signals_of_effortful.csv", index=False)
+        df.to_csv(outdir / suffixed_name("denoised_signals", "csv"), index=False)
 
     # Build monotonic local time per segment when plotting; metrics use dt=1/fs
     fs = float(args.sample_rate)
@@ -542,7 +552,7 @@ def main():
     )
 
     # gives me a warning if my file is still open/can't be accessed
-    csv_path = outdir / "metrics_pct_of_effortful.csv"
+    csv_path = outdir / suffixed_name("metrics_pct", "csv")
     for _ in range(3):
         try:
             metrics.to_csv(csv_path, index=False)
@@ -561,8 +571,8 @@ def main():
         mean_only = metrics[metrics["channel"] == "mean"].copy()
         amp_tbl = mean_only.pivot_table(index="location", columns="gulp", values="amplitude_pct", aggfunc="mean")
         auc_tbl = mean_only.pivot_table(index="location", columns="gulp", values="auc_pct", aggfunc="mean")
-        amp_tbl.to_csv(outdir / "pivot_mean_amplitude_pct_by_loc_gulp_of_effortful.csv")
-        auc_tbl.to_csv(outdir / "pivot_mean_auc_pct_by_loc_gulp_of_effortful.csv")
+        amp_tbl.to_csv(outdir / suffixed_name("pivot_mean_amplitude_pct_by_loc_gulp", "csv"))
+        auc_tbl.to_csv(outdir / suffixed_name("pivot_mean_auc_pct_by_loc_gulp", "csv"))
 
     # === Quick overlays (normalized mean) ===
     def time_axis_for(seg):
@@ -593,7 +603,7 @@ def main():
                 ax.set_ylabel("Percent Change (Δ%) from Baseline")
                 ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
                 fig.tight_layout()
-                fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_norm_of_effortful.png", dpi=150, bbox_inches='tight')
+                fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_norm{suffixed_name('', 'png')}", dpi=150, bbox_inches='tight')
                 plt.close(fig)
 
     # Generate separate overlays for effortful swallows and masako maneuvers
@@ -630,7 +640,7 @@ def main():
                 plt.ylabel("Percent Change (Δ%) from Baseline")
                 plt.legend()
                 plt.tight_layout()
-                plt.savefig(locations_overlay_dir / f"{g.replace(' ', '_')}_locations_overlay_norm_of_effortful.png", dpi=150)
+                plt.savefig(locations_overlay_dir / f"{g.replace(' ', '_')}_locations_overlay_norm{suffixed_name('', 'png')}", dpi=150)
                 plt.close()
 
     # === NEW-ish: Per-(location, gulp) plots showing all 6 channels ===
@@ -646,7 +656,7 @@ def main():
             return np.arange(len(seg), dtype=float)
 
     if args.plot_channels:
-        chan_dir = outdir / "channel_plots_of_effortful"
+        chan_dir = outdir / "channel_plots"
         chan_dir.mkdir(parents=True, exist_ok=True)
 
         for loc in locations:
@@ -673,19 +683,19 @@ def main():
                         )
                         ax.plot(t, ypc, label=cname)
                     ax.set_ylabel("Percent Change (Δ%) from Baseline")
-                    suffix = "norm_of_effortful"
+                    suffix = "norm"
                 else:
                     for i, cname in enumerate(channel_cols):
                         ax.plot(t, Y[:, i], label=cname)
                     ax.set_ylabel("Signal (a.u.)")
-                    suffix = "raw_of_effortful"
+                    suffix = "raw"
 
                 ax.set_title(f"{loc.title()} — {g.title()} (6 channels, {args.plot_channels_mode}, {'SWT' if args.denoise else 'raw'}, {len(seg)} Samples)")
                 ax.set_xlabel("Data Point Index")
                 ax.legend(ncol=3, fontsize=8)
                 fig.tight_layout()
                 fig.savefig(
-                    chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}_of_effortful.png", dpi=150
+                    chan_dir / f"{slug(loc)}_{slug(g)}_channels_{suffix}{out_suffix}.png", dpi=150
                 )
                 plt.close(fig)
 
@@ -859,7 +869,7 @@ def main():
             fig.tight_layout()
 
             fig.savefig(
-                chan_dir2 / f"{slug(loc)}_{slug(g)}_channels_with_events.png",
+                chan_dir2 / f"{slug(loc)}_{slug(g)}_channels_with_events{out_suffix}.png",
                 dpi=150
             )
             plt.close(fig)
@@ -876,7 +886,7 @@ def main():
     
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)
-        summary_df.to_csv(outdir / "trial_consensus_event_counts.csv", index=False)
+        summary_df.to_csv(outdir / suffixed_name("trial_consensus_event_counts", "csv"), index=False)
 
     print("Done. Outputs (of effortful) in:", outdir.as_posix())
 
