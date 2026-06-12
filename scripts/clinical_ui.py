@@ -19,6 +19,34 @@ MODE B (Pipeline mode - recommended):
     --trial "3oz water (1)" \
     --out mockup.png
 
+    python scripts/clinical_ui.py \
+  --denoised outputs/out_test_10_water_5_19_26/denoised_signals_10_water_5_19_26.csv \
+  --metrics outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
+  --location "bottom middle" \
+  --trial "3oz water (5)" \
+  --out outputs/mockup_bottom_middle_3oz_water_5.png
+
+python scripts/clinical_ui.py \
+  --denoised outputs/out_test_10_water_5_20_26/denoised_signals_10_water_5_20_26.csv \
+  --metrics outputs/out_test_10_water_5_20_26/metrics_pct_10_water_5_20_26.csv \
+  --location "bottom middle" \
+  --trial "3oz water (7)" \
+  --out outputs/mockup_bottom_middle_3oz_water_7.png
+
+  python scripts/clinical_ui.py \
+  --denoised outputs/out_test_30_masako_effortful_5_18_26/denoised_signals_30_masako_effortful_5_18_26.csv \
+  --metrics outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+  --location "bottom middle" \
+  --trial "masako_maneuver_11" \
+  --out outputs/mockup_bottom_middle_masako_maneuver_11.png
+
+  python scripts/clinical_ui.py \
+  --denoised outputs/out_test_30_masako_effortful_5_18_26/denoised_signals_30_masako_effortful_5_18_26.csv \
+  --metrics outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+  --location "bottom middle" \
+  --trial "effortful_swallow_11" \
+  --out outputs/mockup_bottom_middle_effortful_swallow_11.png
+
 Features:
 - labeled-window-only x-axis (dotted bounds on both sides)
 - trough detection on detrended MEAN trace (rolling median)
