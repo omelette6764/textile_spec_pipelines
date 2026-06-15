@@ -134,6 +134,147 @@ plt.savefig(outdir / "boxplot_fwhm_by_activity.png", dpi=150)
 plt.close()
 
 
+features = [
+    "amplitude_pct",
+    "auc_pct",
+    "fwhm_seconds",
+    "n_humps",
+    "mean_time_to_peak_s",
+    "mean_time_to_dip_s"
+]
+
+from sklearn.preprocessing import StandardScaler
+
+X = feature_df[features].copy()
+
+X = X.replace([np.inf, -np.inf], np.nan)
+X = X.dropna()
+
+scaler = StandardScaler()
+
+X_scaled = scaler.fit_transform(X)
+
+from sklearn.decomposition import PCA
+
+pca = PCA(n_components=2)
+
+X_pca = pca.fit_transform(X_scaled)
+
+pca_df = pd.DataFrame(
+    X_pca,
+    columns=["PC1", "PC2"]
+)
+
+pca_df["activity"] = feature_df.loc[X.index, "activity"].values
+
+plt.figure(figsize=(8,6))
+
+for activity in pca_df["activity"].unique():
+
+    mask = pca_df["activity"] == activity
+
+    plt.scatter(
+        pca_df.loc[mask, "PC1"],
+        pca_df.loc[mask, "PC2"],
+        label=activity
+    )
+
+plt.xlabel(
+    f"PC1 ({100*pca.explained_variance_ratio_[0]:.1f}%)"
+)
+
+plt.ylabel(
+    f"PC2 ({100*pca.explained_variance_ratio_[1]:.1f}%)"
+)
+
+plt.legend()
+plt.title("PCA of Swallow Features")
+
+plt.tight_layout()
+
+plt.savefig(outdir / "PCA_activity_types.png", dpi=150)
+plt.close()
+
+y = feature_df.loc[X.index, "activity"]
+
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+lda = LinearDiscriminantAnalysis(
+    n_components=2
+)
+
+X_lda = lda.fit_transform(
+    X_scaled,
+    y
+)
+
+lda_df = pd.DataFrame(
+    X_lda,
+    columns=["LD1","LD2"]
+)
+
+lda_df["activity"] = y.values
+
+plt.figure(figsize=(8,6))
+
+for activity in lda_df["activity"].unique():
+
+    mask = lda_df["activity"] == activity
+
+    plt.scatter(
+        lda_df.loc[mask,"LD1"],
+        lda_df.loc[mask,"LD2"],
+        label=activity
+    )
+
+plt.xlabel("LD1")
+plt.ylabel("LD2")
+
+plt.legend()
+
+plt.title("LDA Activity Separation")
+
+plt.tight_layout()
+
+plt.savefig(outdir / "LDA_activity_types.png", dpi=150)
+plt.close()
+
+
+# when i get pass/fail data, change:
+# y = feature_df["activity"] to
+# y = feature_df["pass_fail"] where pass and fail are my labels
+# Then LDA becomes:
+
+# Can these optical features distinguish healthy vs abnormal swallowing?
+
+# which is my clinically important question.
+
+#feature importance:
+
+coef_df = pd.DataFrame({
+    "feature": features,
+    "weight": lda.coef_[0]
+})
+
+coef_df["abs_weight"] = np.abs(
+    coef_df["weight"]
+)
+
+coef_df = coef_df.sort_values(
+    "abs_weight",
+    ascending=False
+)
+
+##AUC             ████████
+##Amplitude       ██████
+##FWHM            ████
+##n_humps         ██
+
+# This immediately tells me:
+
+# Which physiological metrics are driving the separation.
+
+
 
 # ----------------------------
 # Label parsing (matches your pipeline behavior)
