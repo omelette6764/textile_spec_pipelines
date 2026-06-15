@@ -69,6 +69,72 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 from scipy.signal import find_peaks
 
 
+feature_df = metrics[metrics["channel"] == "mean"].copy()
+
+def activity_type(g):
+    g = str(g).lower()
+
+    if "effortful swallow" in g:
+        return "effortful"
+
+    if "masako maneuver" in g:
+        return "masako"
+
+    if "3oz water" in g:
+        return "water"
+
+    return "unknown"
+
+feature_df["activity"] = feature_df["gulp"].apply(activity_type)
+
+plt.figure(figsize=(8,6))
+
+feature_df.boxplot(
+    column="amplitude_pct",
+    by="activity"
+)
+
+plt.ylabel("Amplitude (%)")
+plt.title("Amplitude by Activity")
+plt.suptitle("")
+plt.tight_layout()
+
+plt.savefig(outdir / "boxplot_amplitude_by_activity.png", dpi=150)
+plt.close()
+
+plt.figure(figsize=(8,6))
+
+feature_df.boxplot(
+    column="auc_pct",
+    by="activity"
+)
+
+plt.ylabel("AUC (%·s)")
+plt.title("AUC by Activity")
+plt.suptitle("")
+plt.tight_layout()
+
+plt.savefig(outdir / "boxplot_auc_by_activity.png", dpi=150)
+plt.close()
+
+
+plt.figure(figsize=(8,6))
+
+feature_df.boxplot(
+    column="fwhm_seconds",
+    by="activity"
+)
+
+plt.ylabel("FWHM (s)")
+plt.title("FWHM by Activity")
+plt.suptitle("")
+plt.tight_layout()
+
+plt.savefig(outdir / "boxplot_fwhm_by_activity.png", dpi=150)
+plt.close()
+
+
+
 # ----------------------------
 # Label parsing (matches your pipeline behavior)
 # ----------------------------
