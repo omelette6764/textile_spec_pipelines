@@ -12,6 +12,9 @@
 #   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_30_masako_effortful_5_27_26
 #   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-28_3oz_water_first_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_5_28_26
 #   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-06-05_3oz_water_second_5.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_10_water_6_5_26
+
+#   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-06-15_effortful_and_masako_40_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_40_masako_effortful_6_15_26
+
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean
 
