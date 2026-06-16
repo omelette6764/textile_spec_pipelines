@@ -10,7 +10,7 @@
 #     --metrics \
 #     outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
 #     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
-#     outputs/out_test_25_water_5_25_26/metrics_pct_25_water_5_25_26.csv \
+#     outputs/out_test_10_water_5_28_26/metrics_pct_10_water_5_28_26.csv \
 #     --outdir outputs/combined_analysis
 
 #python scripts/analyze_metrics.py \
@@ -37,6 +37,19 @@
 # python scripts/analyze_metrics.py \
 #     --metrics outputs/out_test_40_masako_effortful_6_15_26/metrics_pct_40_masako_effortful_6_15_26.csv \
 #     --outdir outputs/out_test_40_masako_effortful_6_15_26/analysis
+
+
+#to run all water, masako, and effortful trial metrics data together:
+# python scripts/analyze_metrics.py \
+#     --metrics \
+#     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+#     outputs/out_test_30_masako_effortful_5_27_26/metrics_pct_30_masako_effortful_5_27_26.csv \
+#     outputs/out_test_40_masako_effortful_6_15_26/metrics_pct_40_masako_effortful_6_15_26.csv \
+#     outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
+#     outputs/out_test_10_water_5_20_26/metrics_pct_10_water_5_20_26.csv \
+#     outputs/out_test_10_water_5_28_26/metrics_pct_10_water_5_28_26.csv \
+#     outputs/out_test_10_water_6_5_26/metrics_pct_10_water_6_5_26.csv \
+#     --outdir outputs/combined_analysis_water_masako_effortful_100
 
 
 import pandas as pd
@@ -480,27 +493,51 @@ plt.close()
 print("\nLDA coefficient shape:")
 print(lda.coef_.shape)
 
-coef_df = pd.DataFrame({
-    "feature": features,
-    "weight": lda.coef_.ravel()
-})
+# coef_df = pd.DataFrame({
+#     "feature": features,
+#     "weight": lda.coef_.ravel()
+# })
+
+# class-wise coefifcients:
+coef_df = pd.DataFrame(
+    lda.coef_,
+    columns=features
+)
+
+coef_df["class"] = lda.classes_
+coef_df.to_csv(outdir / "LDA_feature_importance_by_class.csv", index=False)
 
 print("\ncoef_df:")
 print(coef_df.head())
 
-coef_df.to_csv(
-    outdir / "LDA_feature_importance.csv"
+# --- global importance (FIXED VERSION) ---
+global_importance = pd.DataFrame({
+    "feature": features,
+    "mean_abs_weight": np.mean(np.abs(lda.coef_), axis=0)
+}).sort_values("mean_abs_weight", ascending=False)
+
+global_importance.to_csv(
+    outdir / "LDA_feature_importance_global.csv",
+    index=False
 )
 
+print("\nGlobal feature importance:")
+print(global_importance)
 
-coef_df["abs_weight"] = np.abs(
-    coef_df["weight"]
-)
 
-coef_df = coef_df.sort_values(
-    "abs_weight",
-    ascending=False
-)
+# coef_df.to_csv(
+#     outdir / "LDA_feature_importance.csv"
+# )
+
+
+# coef_df["abs_weight"] = np.abs(
+#     coef_df["weight"]
+# )
+
+# coef_df = coef_df.sort_values(
+#     "abs_weight",
+#     ascending=False
+# )
 
 ##AUC             ████████
 ##Amplitude       ██████
