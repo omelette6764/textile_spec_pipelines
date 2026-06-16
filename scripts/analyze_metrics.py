@@ -1,5 +1,42 @@
+#Script use:
+
+#python scripts/analyze_metrics.py \
+#    --metrics outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
+#    --outdir outputs/out_test_10_water_5_19_26/analysis
+
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument(
+    "--metrics",
+    required=True,
+    help="metrics_pct CSV from process_effortful"
+)
+
+parser.add_argument(
+    "--outdir",
+    required=True,
+    help="output folder"
+)
+
+args = parser.parse_args()
+
+metrics_csv = args.metrics
+outdir = Path(args.outdir)
+
+outdir.mkdir(parents=True, exist_ok=True)
+
+
+####################
+
+
 mm = pd.read_csv(metrics_csv)
 mean_metrics = mm[mm["channel"] == "mean"]
+
+print("\nColumns available:")
+print(mean_metrics.columns.tolist())
 
 features = [
     "amplitude_pct",
