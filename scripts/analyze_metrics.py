@@ -153,6 +153,28 @@ loading_df.to_csv(
     outdir / "PCA_feature_loadings.csv"
 )
 
+import seaborn as sns
+
+plt.figure(figsize=(6,4))
+
+sns.heatmap(
+    loading_df,
+    annot=True,
+    cmap="coolwarm",
+    center=0
+)
+
+plt.title("PCA Feature Loadings")
+
+plt.tight_layout()
+
+plt.savefig(
+    outdir / "PCA_feature_loadings_heatmap.png",
+    dpi=150
+)
+
+plt.close()
+
 y = feature_df.loc[valid_idx, "activity"]
 
 
