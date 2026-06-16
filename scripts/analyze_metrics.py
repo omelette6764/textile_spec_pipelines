@@ -4,6 +4,22 @@
 #    --metrics outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
 #    --outdir outputs/out_test_10_water_5_19_26/analysis
 
+#python scripts/analyze_metrics.py \
+#    --metrics outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+#    --outdir outputs/out_test_30_masako_effortful_5_18_26/analysis
+
+# python scripts/analyze_metrics.py \
+#     --metrics outputs/out_test_30_masako_effortful_5_27_26/metrics_pct_30_masako_effortful_5_27_26.csv \
+#     --outdir outputs/out_test_30_masako_effortful_5_27_26/analysis
+
+# python scripts/analyze_metrics.py \
+#     --metrics outputs/out_test_40_masako_effortful_6_15_26/metrics_pct_40_masako_effortful_6_15_26.csv \
+#     --outdir outputs/out_test_40_masako_effortful_6_15_26/analysis
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 import argparse
 from pathlib import Path
 
@@ -70,6 +86,9 @@ def activity_type(g):
 
 feature_df["activity"] = feature_df["gulp"].apply(activity_type)
 
+print("\nActivity counts:")
+print(feature_df["activity"].value_counts())
+
 plt.figure(figsize=(8,6))
 
 feature_df.boxplot(
@@ -128,6 +147,13 @@ features = [
 
 from sklearn.preprocessing import StandardScaler
 
+missing = [c for c in features if c not in feature_df.columns]
+
+if missing:
+    raise ValueError(
+        f"Missing columns in metrics CSV: {missing}"
+    )
+
 X = feature_df[features].copy()
 
 X = X.replace([np.inf, -np.inf], np.nan)
@@ -145,10 +171,23 @@ pca = PCA(n_components=2)
 
 X_pca = pca.fit_transform(X_scaled)
 
+print("\nPCA explained variance:")
+print(pca.explained_variance_ratio_)
+print("Total:",
+      pca.explained_variance_ratio_.sum())
+
+
 pca_df = pd.DataFrame(
     X_pca,
     columns=["PC1", "PC2"]
 )
+
+pca_df.to_csv(
+    outdir / "PCA_coordinates.csv",
+    index=False
+)
+
+
 
 pca_df["activity"] = feature_df.loc[X.index, "activity"].values
 
@@ -215,6 +254,28 @@ plt.close()
 y = feature_df.loc[valid_idx, "activity"]
 
 
+corr = feature_df[features].corr()
+plt.figure(figsize=(7,6))
+
+sns.heatmap(
+    corr,
+    annot=True,
+    cmap="coolwarm",
+    center=0,
+    square=True
+)
+
+plt.title("Feature Correlation Matrix")
+
+plt.tight_layout()
+
+plt.savefig(
+    outdir / "feature_correlation_matrix.png",
+    dpi=150
+)
+
+plt.close()
+
 
 
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -246,6 +307,10 @@ else:
 
     lda_df["activity"] = y.values
 
+lda_df.to_csv(
+    outdir / "LDA_coordinates.csv",
+    index=False
+)
 
 plt.figure(figsize=(8,6))
 
@@ -352,15 +417,40 @@ plt.close()
 
 #feature importance:
 
+# coef_df = pd.DataFrame({
+#     "feature": features,
+#     "weight": lda.coef_[0]
+# })
+
+# coef_df.to_csv(
+#     outdir / "LDA_feature_importance.csv",
+#     index=False
+# )
+
+# coef_df = pd.DataFrame(
+#     lda.scalings_,
+#     index=features
+# )
+
+# coef_df.to_csv(
+#     outdir / "LDA_feature_importance.csv"
+#)
+
+print("\nLDA coefficient shape:")
+print(lda.coef_.shape)
+
 coef_df = pd.DataFrame({
     "feature": features,
-    "weight": lda.coef_[0]
+    "weight": lda.coef_.ravel()
 })
 
+print("\ncoef_df:")
+print(coef_df.head())
+
 coef_df.to_csv(
-    outdir / "LDA_feature_importance.csv",
-    index=False
+    outdir / "LDA_feature_importance.csv"
 )
+
 
 coef_df["abs_weight"] = np.abs(
     coef_df["weight"]
