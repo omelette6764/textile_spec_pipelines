@@ -658,3 +658,45 @@ rf_importance.to_csv(
 
 print("\nRandom Forest Feature Importance:")
 print(rf_importance)
+
+from sklearn.metrics import roc_curve, auc
+from sklearn.preprocessing import label_binarize
+
+# ----------------------------
+# Ensure binary classification for ROC
+# ----------------------------
+unique_classes = np.unique(y)
+
+if len(unique_classes) != 2:
+    print("\nROC skipped: not a binary classification problem.")
+else:
+
+    # Fit model (if not already fit above)
+    rf.fit(X_train, y_train)
+
+    # Predict probabilities for positive class
+    y_proba = rf.predict_proba(X_test)[:, 1]
+
+    # Compute ROC curve
+    fpr, tpr, thresholds = roc_curve(y_test, y_proba, pos_label=unique_classes[1])
+    roc_auc = auc(fpr, tpr)
+
+    print("\nROC AUC:", roc_auc)
+
+    # ----------------------------
+    # Plot ROC curve
+    # ----------------------------
+    plt.figure(figsize=(6,6))
+
+    plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
+    plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
+
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("Random Forest ROC Curve")
+
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+
+    plt.savefig(outdir / "RF_ROC_curve.png", dpi=150)
+    plt.close()
