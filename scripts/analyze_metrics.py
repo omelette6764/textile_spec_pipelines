@@ -539,6 +539,9 @@ print(global_importance)
 #     ascending=False
 # )
 
+print("\nLDA feature ranking:")
+print(coef_df)
+
 ##AUC             ████████
 ##Amplitude       ██████
 ##FWHM            ████
@@ -547,3 +550,111 @@ print(global_importance)
 # This immediately tells me:
 
 # Which physiological metrics are driving the separation.
+
+
+from scipy.stats import mannwhitneyu
+
+eff = feature_df[
+    feature_df["activity"]=="effortful"
+]
+
+mas = feature_df[
+    feature_df["activity"]=="masako"
+]
+
+for f in features:
+
+    stat,p = mannwhitneyu(
+        eff[f],
+        mas[f]
+    )
+
+    print(f"{f}: p={p:.4e}")
+
+#########
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
+
+# ----------------------------
+# Random Forest model
+# ----------------------------
+rf = RandomForestClassifier(
+    n_estimators=300,
+    random_state=42,
+    class_weight="balanced"
+)
+
+# ----------------------------
+# 1. Cross-validated accuracy (most important baseline)
+# ----------------------------
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+cv_scores = cross_val_score(
+    rf,
+    X_scaled,
+    y,
+    cv=cv,
+    scoring="accuracy"
+)
+
+print("\nRandom Forest CV Accuracy:")
+print("Mean:", cv_scores.mean())
+print("Std:", cv_scores.std())
+
+# ----------------------------
+# 2. Train/test split evaluation (for ROC + confusion matrix later)
+# ----------------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled,
+    y,
+    test_size=0.3,
+    random_state=42,
+    stratify=y
+)
+
+rf.fit(X_train, y_train)
+y_pred = rf.predict(X_test)
+
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+
+# ----------------------------
+# 3. Confusion matrix plot
+# ----------------------------
+cm = confusion_matrix(y_test, y_pred, labels=np.unique(y))
+
+plt.figure(figsize=(6,5))
+sns.heatmap(
+    cm,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=np.unique(y),
+    yticklabels=np.unique(y)
+)
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.title("Random Forest Confusion Matrix")
+
+plt.tight_layout()
+plt.savefig(outdir / "RF_confusion_matrix.png", dpi=150)
+plt.close()
+
+# ----------------------------
+# 4. Feature importance
+# ----------------------------
+rf_importance = pd.DataFrame({
+    "feature": features,
+    "importance": rf.feature_importances_
+}).sort_values("importance", ascending=False)
+
+rf_importance.to_csv(
+    outdir / "RF_feature_importance.csv",
+    index=False
+)
+
+print("\nRandom Forest Feature Importance:")
+print(rf_importance)
