@@ -4,9 +4,31 @@
 #    --metrics outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
 #    --outdir outputs/out_test_10_water_5_19_26/analysis
 
+#OR
+
+# python scripts/analyze_metrics.py \
+#     --metrics \
+#     outputs/out_test_10_water_5_19_26/metrics_pct_10_water_5_19_26.csv \
+#     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+#     outputs/out_test_25_water_5_25_26/metrics_pct_25_water_5_25_26.csv \
+#     --outdir outputs/combined_analysis
+
 #python scripts/analyze_metrics.py \
 #    --metrics outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
 #    --outdir outputs/out_test_30_masako_effortful_5_18_26/analysis
+
+#ALL masako and effortful trials can be run with:
+
+# python scripts/analyze_metrics.py \
+#     --metrics \
+#     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+#     outputs/out_test_30_masako_effortful_5_27_26/metrics_pct_30_masako_effortful_5_27_26.csv \
+#     outputs/out_test_40_masako_effortful_6_15_26/metrics_pct_40_masako_effortful_6_15_26.csv \
+#     --outdir outputs/combined_analysis_masako_and_effortful_100
+
+
+
+    #########################
 
 # python scripts/analyze_metrics.py \
 #     --metrics outputs/out_test_30_masako_effortful_5_27_26/metrics_pct_30_masako_effortful_5_27_26.csv \
@@ -27,8 +49,9 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument(
     "--metrics",
+    nargs="+",
     required=True,
-    help="metrics_pct CSV from process_effortful"
+    help="One or more metrics_pct CSV files from process_effortful pipeline"
 )
 
 parser.add_argument(
@@ -39,7 +62,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-metrics_csv = args.metrics
+metrics_files = args.metrics
 outdir = Path(args.outdir)
 
 outdir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +71,25 @@ outdir.mkdir(parents=True, exist_ok=True)
 ####################
 
 
-mm = pd.read_csv(metrics_csv)
+#mm = pd.read_csv(metrics_csv)
+
+all_metrics = []
+
+for f in metrics_files:
+
+    print(f"Loading: {f}")
+
+    tmp = pd.read_csv(f)
+
+    tmp["source_file"] = Path(f).stem
+
+    all_metrics.append(tmp)
+
+mm = pd.concat(
+    all_metrics,
+    ignore_index=True
+)
+
 mean_metrics = mm[mm["channel"] == "mean"]
 
 print("\nColumns available:")
