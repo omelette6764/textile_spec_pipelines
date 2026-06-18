@@ -47,6 +47,20 @@ python scripts/clinical_ui.py \
   --trial "effortful_swallow_11" \
   --out outputs/mockup_bottom_middle_effortful_swallow_11.png
 
+python scripts/clinical_ui.py \
+  --denoised outputs/out_test_30_masako_effortful_5_27_26/denoised_signals_30_masako_effortful_5_27_26.csv \
+  --metrics outputs/out_test_30_masako_effortful_5_27_26/metrics_pct_30_masako_effortful_5_27_26.csv \
+  --location "bottom middle" \
+  --trial "masako_maneuver_58" \
+  --out outputs/mockup_bottom_middle_masako_maneuver_58.png
+
+  python scripts/clinical_ui.py \
+  --denoised outputs/out_test_40_masako_effortful_6_15_26/denoised_signals_40_masako_effortful_6_15_26.csv \
+  --metrics outputs/out_test_40_masako_effortful_6_15_26/metrics_pct_40_masako_effortful_6_15_26.csv \
+  --location "bottom middle" \
+  --trial "effortful_swallow_82" \
+  --out outputs/mockup_bottom_middle_effortful_swallow_82.png
+
 Features:
 - labeled-window-only x-axis (dotted bounds on both sides)
 - trough detection on detrended MEAN trace (rolling median)
