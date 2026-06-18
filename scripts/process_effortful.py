@@ -15,6 +15,24 @@
 
 #   python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-06-15_effortful_and_masako_40_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_40_masako_effortful_6_15_26
 
+#include/exclude CLI options:
+
+# python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_30_masako_effortful_5_18_26 --exclude-gulps "effortful swallow 13"
+
+#to run ALL raw data csv files at once and generate ALL figures associated with all data files:
+# python scripts/process_effortful.py --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" "BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" "BTVIZ_2026-06-15_effortful_and_masako_40_each.csv" --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_test_30_masako_effortful_5_18_26 --exclude-gulps "effortful swallow 13"
+
+# python scripts/process_effortful.py \
+#   --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv" \
+#         raw_data/"BTVIZ_2026-05-27_effortful_and_masako_30_each.csv" \
+#         raw_data/"BTVIZ_2026-06-15_effortful_and_masako_40_each.csv" \
+#   --denoise --wavelet db2 --level 3 --zero-levels 1,2,3 \
+#   --sample-rate 30 \
+#   --out outputs/full_eff_mas_csv_plots \
+#   --exclude-gulps "effortful swallow 13,effortful swallow 23"
+
+# python scripts/process_effortful.py   --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv"         raw_data/"BTVIZ_2026-05-27_effortful_and_masako_30_each.csv"         raw_data/"BTVIZ_2026-06-15_effortful_and_masako_40_each.csv"   --denoise --wavelet db2 --level 3 --zero-levels 1,2,3   --sample-rate 30   --out outputs/full_eff_mas_csv_plots   --exclude-gulps "effortful swallow 13,effortful swallow 23,effortful swallow 68,effortful swallow 98"
+
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean
 
@@ -212,7 +230,7 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True)
+    ap.add_argument("--csv", required=True, nargs='+', help="One or more input CSV files")
     ap.add_argument("--out", default="out_clean")
     ap.add_argument("--denoise", action="store_true", help="Apply SWT denoising")
     ap.add_argument("--wavelet", default="db2")
@@ -229,6 +247,16 @@ def main():
         default="raw",
         choices=["raw", "norm"],
         help="Plot 'raw' filtered signals or 'norm' (Δ%% from baseline) per channel",
+    )
+    ap.add_argument(
+        "--exclude-gulps",
+        default="",
+        help="Comma-separated gulp labels to omit from overlay plots (e.g. 'effortful swallow 3,masako maneuver 5')",
+    )
+    ap.add_argument(
+        "--include-gulps",
+        default="",
+        help="Comma-separated gulp labels to include in overlay plots; other gulps are skipped",
     )
     ap.add_argument(
         "--debug-segments",
@@ -251,8 +279,12 @@ def main():
     def suffixed_name(name: str, ext: str) -> str:
         return f"{name}{out_suffix}.{ext}"
 
-    #df = pd.read_csv(args.csv, low_memory=False).ffill()
-    df = pd.read_csv(args.csv, low_memory=False)
+    csv_files = args.csv
+    if len(csv_files) == 1:
+        df = pd.read_csv(csv_files[0], low_memory=False)
+    else:
+        df_list = [pd.read_csv(path, low_memory=False) for path in csv_files]
+        df = pd.concat(df_list, ignore_index=True, sort=False)
 
     # Normalize whitespace blanks
     df["Activity"] = df["Activity"].astype(str).str.strip()
@@ -584,6 +616,42 @@ def main():
         t = monotonic_local_time(seg[time_col])
         return t if t is not None else np.arange(len(seg))
 
+    def find_primary_trough_index(ypc):
+        std = np.nanstd(ypc)
+        if not np.isfinite(std) or std == 0.0 or len(ypc) == 0:
+            return None
+        troughs, _ = find_peaks(
+            -ypc,
+            height=std * 1.0,
+            prominence=std * 2.0,
+            distance=max(1, int(0.6)),
+        )
+        if len(troughs) == 0:
+            troughs, _ = find_peaks(-ypc, prominence=std * 0.5, distance=1)
+        if len(troughs) == 0:
+            return None
+        center = len(ypc) // 2
+        return int(troughs[np.argmin(np.abs(troughs - center))])
+
+    def find_percentile_trough_index(ypc, percentile=0.5):
+        trough_idx = find_primary_trough_index(ypc)
+        if trough_idx is None:
+            return None
+        trough_value = float(ypc[trough_idx])
+        if not np.isfinite(trough_value):
+            return None
+        target = trough_value * percentile
+        if target >= 0:
+            return trough_idx
+        left_idx = np.where(ypc[:trough_idx + 1] <= target)[0]
+        return int(left_idx[-1]) if len(left_idx) else trough_idx
+
+    def aligned_time_axis(seg, trough_idx):
+        t = time_axis_for(seg)
+        if trough_idx is None or t is None or len(t) != len(seg):
+            return None
+        return t - t[trough_idx]
+
     # Helper function to generate overlay plots for a filtered set of gulps
     def generate_overlay_plots(filtered_gulps, task_name):
         """Generate overlay plots for a specific task type (e.g., 'effortful swallow' or 'masako maneuver')."""
@@ -604,20 +672,76 @@ def main():
                 ax.set_title(f"{loc.title()} — {task_name} Overlay (Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
                 ax.set_xlabel("Data Point Index")
                 ax.set_ylabel("Percent Change (Δ%) from Baseline")
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+                #ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
                 fig.tight_layout()
                 fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_norm{suffixed_name('', 'png')}", dpi=150, bbox_inches='tight')
                 plt.close(fig)
 
+    def generate_aligned_overlay_plots(filtered_gulps, task_name, percentile=None):
+        """Generate overlay plots with each trial shifted so a trough anchor point aligns at x=0."""
+        for loc in locations:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            any_plot = False
+            for g in filtered_gulps:
+                seg = get_last_segment(loc, g)
+                if len(seg) < 5:
+                    continue
+                Y = seg[channel_cols].to_numpy(float)
+                ymean = np.nanmean(Y, axis=1)
+                ypc, _ = normalize_percent(ymean)
+                if percentile is None:
+                    trough_idx = find_primary_trough_index(ypc)
+                else:
+                    trough_idx = find_percentile_trough_index(ypc, percentile=percentile)
+                if trough_idx is None:
+                    continue
+                t = aligned_time_axis(seg, trough_idx)
+                if t is None:
+                    t = np.arange(len(ypc), dtype=float) - trough_idx
+                ax.plot(t, ypc, label=g)
+                any_plot = True
+            if any_plot:
+                ax.axvline(0, color="#333", lw=0.8, ls="--", alpha=0.6)
+                if percentile is None:
+                    suffix = "primary"
+                    title_suffix = "Primary trough"
+                else:
+                    suffix = f"{int(percentile*100)}pct"
+                    title_suffix = f"{int(percentile*100)}% depth trough"
+                ax.set_title(f"{loc.title()} — {task_name} Overlay ({title_suffix} Aligned, Percent Change (Δ%) from Baseline, {len(seg)} Samples)")
+                ax.set_xlabel("Samples from Aligned Trough Point (0 = aligned trough)")
+                ax.set_ylabel("Percent Change (Δ%) from Baseline")
+                #ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+                fig.tight_layout()
+                fig.savefig(outdir / f"{loc.replace(' ', '_')}_gulps_overlay_{task_name.lower().replace(' ', '_')}_aligned_{suffix}_norm{suffixed_name('', 'png')}", dpi=150, bbox_inches='tight')
+                plt.close(fig)
+
+    def parse_gulp_list(raw: str):
+        return [g.strip() for g in raw.split(",") if g.strip()]
+
+    exclude_gulps = set(parse_gulp_list(args.exclude_gulps))
+    include_gulps = set(parse_gulp_list(args.include_gulps))
+
+    def filter_gulps(raw_gulps):
+        if include_gulps:
+            return [g for g in raw_gulps if g in include_gulps]
+        if exclude_gulps:
+            return [g for g in raw_gulps if g not in exclude_gulps]
+        return raw_gulps
+
     # Generate separate overlays for effortful swallows and masako maneuvers
-    effortful_gulps = [g for g in gulps if "effortful swallow" in g]
-    masako_gulps = [g for g in gulps if "masako maneuver" in g]
+    effortful_gulps = filter_gulps([g for g in gulps if "effortful swallow" in g])
+    masako_gulps = filter_gulps([g for g in gulps if "masako maneuver" in g])
     
     if effortful_gulps:
         generate_overlay_plots(effortful_gulps, "Effortful Swallow")
+        generate_aligned_overlay_plots(effortful_gulps, "Effortful Swallow")
+        generate_aligned_overlay_plots(effortful_gulps, "Effortful Swallow", percentile=0.5)
     
     if masako_gulps:
         generate_overlay_plots(masako_gulps, "Masako Maneuver")
+        generate_aligned_overlay_plots(masako_gulps, "Masako Maneuver")
+        generate_aligned_overlay_plots(masako_gulps, "Masako Maneuver", percentile=0.5)
 
         # === Locations overlay plots directory ===
         locations_overlay_dir = outdir / "Locations Overlay"
