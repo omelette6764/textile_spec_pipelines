@@ -33,6 +33,20 @@
 
 # python scripts/process_effortful.py   --csv raw_data/"BTVIZ_2026-05-18_masako_and_efforful_30_each(BTVIZ_2026-05-18_masako_and_eff).csv"         raw_data/"BTVIZ_2026-05-27_effortful_and_masako_30_each.csv"         raw_data/"BTVIZ_2026-06-15_effortful_and_masako_40_each.csv"   --denoise --wavelet db2 --level 3 --zero-levels 1,2,3   --sample-rate 30   --out outputs/full_eff_mas_csv_plots   --exclude-gulps "effortful swallow 13,effortful swallow 23,effortful swallow 68,effortful swallow 98"
 
+
+#failed trials:
+
+# cd /workspaces/textile_spec_pipelines
+# python3 scripts/process_effortful.py \
+#   --csv raw_data/"BTVIZ_2026-06-23_effortful_swallow_fail_80.csv" \
+#   --denoise \
+#   --wavelet db2 \
+#   --level 3 \
+#   --zero-levels 1,2,3 \
+#   --sample-rate 30 \
+#   --out outputs/out_test_effortful_swallow_fail_6_23_26
+
+
 # Options:
 #   --wavelet db2 --level 3 --zero-levels 1,2,3 --sample-rate 30 --out outputs/out_clean
 
@@ -359,7 +373,9 @@ def main():
         if not task:
             return ""
 
-        nums = re.findall(r"(\d+)", raw)
+        # Normalize underscores and extra whitespace so qualifiers like "fail" are preserved.
+        normalized = re.sub(r"[_]+", " ", raw).strip()
+        nums = re.findall(r"(\d+)", normalized)
         if not nums:
             return task
 
@@ -369,11 +385,15 @@ def main():
                 n = nums[-1]
             else:
                 return task
-        else:
-            n = nums[-1]
-
-        if task == "3oz water":
             return f"3oz water ({n})"
+
+        n = nums[-1]
+        match = re.search(rf"({re.escape(task)})\s*(.*?)\s*{n}$", normalized)
+        if match:
+            extra = match.group(2).strip()
+            if extra:
+                return f"{task} {extra} {n}"
+
         return f"{task} {n}"
 
     # Apply location + task classification
@@ -405,8 +425,8 @@ def main():
         if t.startswith("3oz water"):
             return bool(re.match(r"^3oz water\s*\(\s*(\d+)\s*\)$", t))
 
-        # For effortful/masako, the number must follow the task name.
-        return bool(re.match(r"^(effortful swallow|masako maneuver)\s+(\d+)$", t))
+        # For effortful/masako, allow optional qualifiers like 'fail' between the task name and number.
+        return bool(re.match(r"^(effortful swallow|masako maneuver)(?:\s+[a-z]+)*\s+\d+$", t))
 
     has_true_numbers = df["_gulp_raw"].apply(has_true_trial_number)
 
@@ -453,6 +473,32 @@ def main():
         df["_gulp"] = gulp_labels
 
 
+
+    # ===============================
+    # PASS / FAIL LABEL (CLEAN)
+    # ===============================
+    df["pass_fail"] = (
+        df["_gulp"]
+        .fillna("")
+        .str.lower()
+        .str.contains("fail", regex=False)
+        .map({True: "fail", False: "pass"})
+    )
+
+    print("\nPass/Fail counts:")
+    print(df["pass_fail"].value_counts(dropna=False))
+
+    print("\nFail trials preview:")
+    print(df[df["pass_fail"] == "fail"]["_gulp"].unique())
+
+    # # ---------- PASS / FAIL LABEL ----------
+    # def pass_fail_label(gulp):
+    #     g = str(gulp).lower()
+    #     if "fail" in g:
+    #         return "fail"
+    #     return "pass"
+
+    # df["pass_fail"] = df["_gulp"].apply(pass_fail_label)
 
 
     # Choose time and channel columns
@@ -531,17 +577,11 @@ def main():
         if (df["_location"] == v).any()
     ]
 
-    # --- Build gulp lists for all three task types ---
-    effortful = [f"effortful swallow {i}" for i in range(1, 100)]
-    masako = [f"masako maneuver {i}" for i in range(1, 100)]
-    water = [f"3oz water ({i})" for i in range(1, 100)]
-
-    gulps = []
-    for pattern_list in [effortful, masako, water]:
-        #gulps.extend([g for g in pattern_list if (df["Activity"].str.lower() == g.lower()).any()])
-        for g in pattern_list:
-            if (df["_gulp"] == g).any():
-                gulps.append(g)
+    # --- Build gulp lists dynamically from normalized labels ---
+    gulps = [
+        g for g in df["_gulp"].dropna().unique()
+        if str(g).strip() != ""
+    ]
 
     print(f"Detected gulps: {gulps}")
 
@@ -558,7 +598,15 @@ def main():
             ymean_pct, _ = normalize_percent(ymean)
             m = seg_metrics(ymean_pct, dt=dt, mode=mode)
 
-            rows.append(dict(location=loc, gulp=g, channel="mean", n=len(seg), mode=mode, **m))
+            rows.append(dict(
+                location=loc,
+                gulp=g,
+                channel="mean",
+                n=len(seg),
+                mode=mode,
+                pass_fail=seg["pass_fail"].iloc[0],
+                **m
+            ))
 
             # channel-wise too
             for i, cname in enumerate(channel_cols):
@@ -571,6 +619,11 @@ def main():
         return
 
     metrics = pd.DataFrame(rows)
+
+    # Preserve pass/fail status in exported metrics
+    metrics["pass_fail"] = metrics["gulp"].str.contains("fail", case=False, na=False).map(
+        {True: "fail", False: "pass"}
+    )
 
     # === NEW: Compute consensus event count for each (location, gulp) pair ===
     consensus_dict = {}
