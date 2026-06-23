@@ -162,6 +162,84 @@ print(feature_df["activity"].value_counts())
 print("\nPass/Fail counts:")
 print(feature_df["pass_fail"].value_counts())
 
+effortful_df = feature_df[
+    feature_df["activity"] == "effortful"
+].copy()
+
+X_eff = effortful_df[features].copy()
+X_eff = X_eff.replace([np.inf, -np.inf], np.nan).dropna()
+y_eff = effortful_df.loc[X_eff.index, "pass_fail"]
+
+if y_eff.nunique() > 1:
+    from sklearn.decomposition import PCA
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+    scaler_eff = StandardScaler()
+    X_eff_scaled = scaler_eff.fit_transform(X_eff)
+
+    pca2 = PCA(n_components=2)
+    X_eff_pca = pca2.fit_transform(X_eff_scaled)
+
+    pca_eff_df = pd.DataFrame(
+        X_eff_pca,
+        columns=["PC1", "PC2"],
+        index=X_eff.index,
+    )
+    pca_eff_df["pass_fail"] = y_eff.values
+    pca_eff_df.to_csv(
+        outdir / "PCA_effortful_pass_fail_coordinates.csv",
+        index=False,
+    )
+
+    plt.figure(figsize=(8,6))
+    for label in sorted(pca_eff_df["pass_fail"].unique()):
+        mask = pca_eff_df["pass_fail"] == label
+        plt.scatter(
+            pca_eff_df.loc[mask, "PC1"],
+            pca_eff_df.loc[mask, "PC2"],
+            label=label,
+            alpha=0.8,
+        )
+    plt.xlabel(f"PC1 ({100*pca2.explained_variance_ratio_[0]:.1f}%)")
+    plt.ylabel(f"PC2 ({100*pca2.explained_variance_ratio_[1]:.1f}%)")
+    plt.title("PCA: Effortful Swallow Pass vs Fail")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "PCA_effortful_pass_fail.png", dpi=150)
+    plt.close()
+
+    lda2 = LinearDiscriminantAnalysis(n_components=1)
+    X_eff_lda = lda2.fit_transform(X_eff_scaled, y_eff)
+
+    lda_eff_df = pd.DataFrame({
+        "LD1": X_eff_lda[:, 0],
+        "pass_fail": y_eff.values,
+    })
+    lda_eff_df.to_csv(
+        outdir / "LDA_effortful_pass_fail_coordinates.csv",
+        index=False,
+    )
+
+    plt.figure(figsize=(8,4))
+    for label in sorted(lda_eff_df["pass_fail"].unique()):
+        mask = lda_eff_df["pass_fail"] == label
+        plt.scatter(
+            lda_eff_df.loc[mask, "LD1"],
+            np.zeros(mask.sum()),
+            label=label,
+            alpha=0.8,
+        )
+    plt.xlabel("LD1")
+    plt.yticks([])
+    plt.title("LDA: Effortful Swallow Pass vs Fail")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "LDA_effortful_pass_fail.png", dpi=150)
+    plt.close()
+else:
+    print("\nSkipping effortful pass/fail PCA/LDA: need at least two pass_fail classes.")
+
+
 plt.figure(figsize=(8,6))
 
 feature_df.boxplot(
