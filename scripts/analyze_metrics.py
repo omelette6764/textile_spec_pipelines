@@ -51,6 +51,11 @@
 #     outputs/out_test_10_water_6_5_26/metrics_pct_10_water_6_5_26.csv \
 #     --outdir outputs/combined_analysis_water_masako_effortful_100
 
+# python3 scripts/analyze_metrics.py \
+#     --metrics \
+#     outputs/out_test_effortful_swallow_fail_6_23_26/metrics_pct_effortful_swallow_fail_6_23_26.csv \
+#     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
+#     --outdir outputs/out_test_effortful_swallow_fail_6_23_26/analysis
 
 import pandas as pd
 import numpy as np
@@ -140,8 +145,22 @@ def activity_type(g):
 
 feature_df["activity"] = feature_df["gulp"].apply(activity_type)
 
+if "pass_fail" in feature_df.columns:
+    feature_df["pass_fail"] = feature_df["pass_fail"].astype(str).str.lower().replace({"nan": "pass"})
+else:
+    def pass_fail_label(gulp):
+        g = str(gulp).lower()
+        if "fail" in g:
+            return "fail"
+        return "pass"
+
+    feature_df["pass_fail"] = feature_df["gulp"].apply(pass_fail_label)
+
 print("\nActivity counts:")
 print(feature_df["activity"].value_counts())
+
+print("\nPass/Fail counts:")
+print(feature_df["pass_fail"].value_counts())
 
 plt.figure(figsize=(8,6))
 
