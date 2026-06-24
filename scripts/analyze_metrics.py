@@ -62,6 +62,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 from pathlib import Path
+from sklearn.preprocessing import StandardScaler
 
 parser = argparse.ArgumentParser()
 
@@ -145,16 +146,18 @@ def activity_type(g):
 
 feature_df["activity"] = feature_df["gulp"].apply(activity_type)
 
-if "pass_fail" in feature_df.columns:
-    feature_df["pass_fail"] = feature_df["pass_fail"].astype(str).str.lower().replace({"nan": "pass"})
-else:
-    def pass_fail_label(gulp):
-        g = str(gulp).lower()
-        if "fail" in g:
-            return "fail"
-        return "pass"
+def pass_fail_label(gulp):
+    g = str(gulp).lower()
+    if "fail" in g:
+        return "fail"
+    return "pass"
 
-    feature_df["pass_fail"] = feature_df["gulp"].apply(pass_fail_label)
+feature_df["pass_fail"] = feature_df["gulp"].apply(pass_fail_label)
+if "pass_fail" in mean_metrics.columns:
+    existing = mean_metrics["pass_fail"].where(mean_metrics["pass_fail"].notna(), "").astype(str).str.lower().str.strip()
+    existing = existing.replace({"nan": ""})
+    keep = existing != ""
+    feature_df.loc[keep, "pass_fail"] = existing[keep].values
 
 print("\nActivity counts:")
 print(feature_df["activity"].value_counts())
@@ -600,8 +603,10 @@ coef_df = pd.DataFrame(
     lda.coef_,
     columns=features
 )
-
-coef_df["class"] = lda.classes_
+if lda.coef_.shape[0] == len(lda.classes_):
+    coef_df["class"] = lda.classes_
+else:
+    coef_df["class"] = ", ".join(str(c) for c in lda.classes_)
 coef_df.to_csv(outdir / "LDA_feature_importance_by_class.csv", index=False)
 
 print("\ncoef_df:")
