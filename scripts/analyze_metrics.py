@@ -62,6 +62,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 from pathlib import Path
+from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 parser = argparse.ArgumentParser()
@@ -119,7 +120,6 @@ features = [
     "auc_pct",
     "fwhm_seconds",
     "n_humps",
-    "mean_inter_gulp_s",
     "mean_time_to_peak_s",
     "mean_time_to_dip_s",
 ]
@@ -159,88 +159,121 @@ if "pass_fail" in mean_metrics.columns:
     keep = existing != ""
     feature_df.loc[keep, "pass_fail"] = existing[keep].values
 
+impute_cols = [
+    "mean_inter_gulp_s",
+    "mean_time_to_peak_s",
+    "mean_time_to_dip_s",
+]
+impute_cols = [c for c in impute_cols if c in feature_df.columns]
+if impute_cols:
+    missing_before = feature_df[impute_cols].isna().sum()
+    if missing_before.any():
+        imputer = SimpleImputer(strategy="mean")
+        feature_df[impute_cols] = imputer.fit_transform(feature_df[impute_cols])
+        missing_after = feature_df[impute_cols].isna().sum()
+        print("\nImputed missing mean features:")
+        print(missing_before)
+        print("=> after imputation")
+        print(missing_after)
+
 print("\nActivity counts:")
 print(feature_df["activity"].value_counts())
 
 print("\nPass/Fail counts:")
 print(feature_df["pass_fail"].value_counts())
 
-effortful_df = feature_df[
-    feature_df["activity"] == "effortful"
-].copy()
+def run_pass_fail_activity_analysis(activity_name: str):
+    activity_df = feature_df[feature_df["activity"] == activity_name].copy()
+    raw_counts = activity_df["pass_fail"].value_counts()
 
-X_eff = effortful_df[features].copy()
-X_eff = X_eff.replace([np.inf, -np.inf], np.nan).dropna()
-y_eff = effortful_df.loc[X_eff.index, "pass_fail"]
+    X_act = activity_df[features].copy()
+    X_act = X_act.replace([np.inf, -np.inf], np.nan)
+    X_act_valid = X_act.dropna()
+    y_act = activity_df.loc[X_act_valid.index, "pass_fail"]
 
-if y_eff.nunique() > 1:
+    valid_counts = y_act.value_counts()
+
+    print(f"\n{activity_name.title()} raw pass/fail counts:")
+    print(raw_counts)
+    print(f"{activity_name.title()} valid feature rows after dropna: {len(X_act_valid)}")
+    print(f"{activity_name.title()} valid pass/fail counts:")
+    print(valid_counts)
+
+    if y_act.nunique() <= 1:
+        print(
+            f"Skipping {activity_name} pass/fail PCA/LDA: need at least two labels in {activity_name}."
+        )
+        return
+
     from sklearn.decomposition import PCA
     from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
-    scaler_eff = StandardScaler()
-    X_eff_scaled = scaler_eff.fit_transform(X_eff)
+    scaler_act = StandardScaler()
+    X_act_scaled = scaler_act.fit_transform(X_act_valid)
 
-    pca2 = PCA(n_components=2)
-    X_eff_pca = pca2.fit_transform(X_eff_scaled)
+    pca_act = PCA(n_components=2)
+    X_act_pca = pca_act.fit_transform(X_act_scaled)
 
-    pca_eff_df = pd.DataFrame(
-        X_eff_pca,
+    pca_act_df = pd.DataFrame(
+        X_act_pca,
         columns=["PC1", "PC2"],
-        index=X_eff.index,
+        index=X_act_valid.index,
     )
-    pca_eff_df["pass_fail"] = y_eff.values
-    pca_eff_df.to_csv(
-        outdir / "PCA_effortful_pass_fail_coordinates.csv",
+    pca_act_df["pass_fail"] = y_act.values
+    pca_act_df.to_csv(
+        outdir / f"PCA_{activity_name}_pass_fail_coordinates.csv",
         index=False,
     )
 
     plt.figure(figsize=(8,6))
-    for label in sorted(pca_eff_df["pass_fail"].unique()):
-        mask = pca_eff_df["pass_fail"] == label
+    for label in sorted(pca_act_df["pass_fail"].unique()):
+        mask = pca_act_df["pass_fail"] == label
         plt.scatter(
-            pca_eff_df.loc[mask, "PC1"],
-            pca_eff_df.loc[mask, "PC2"],
+            pca_act_df.loc[mask, "PC1"],
+            pca_act_df.loc[mask, "PC2"],
             label=label,
             alpha=0.8,
         )
-    plt.xlabel(f"PC1 ({100*pca2.explained_variance_ratio_[0]:.1f}%)")
-    plt.ylabel(f"PC2 ({100*pca2.explained_variance_ratio_[1]:.1f}%)")
-    plt.title("PCA: Effortful Swallow Pass vs Fail")
+    plt.xlabel(f"PC1 ({100*pca_act.explained_variance_ratio_[0]:.1f}%)")
+    plt.ylabel(f"PC2 ({100*pca_act.explained_variance_ratio_[1]:.1f}%)")
+    plt.title(f"PCA: {activity_name.title()} Pass vs Fail")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(outdir / "PCA_effortful_pass_fail.png", dpi=150)
+    plt.savefig(outdir / f"PCA_{activity_name}_pass_fail.png", dpi=150)
     plt.close()
 
-    lda2 = LinearDiscriminantAnalysis(n_components=1)
-    X_eff_lda = lda2.fit_transform(X_eff_scaled, y_eff)
+    lda_act = LinearDiscriminantAnalysis(n_components=1)
+    X_act_lda = lda_act.fit_transform(X_act_scaled, y_act)
 
-    lda_eff_df = pd.DataFrame({
-        "LD1": X_eff_lda[:, 0],
-        "pass_fail": y_eff.values,
+    lda_act_df = pd.DataFrame({
+        "LD1": X_act_lda[:, 0],
+        "pass_fail": y_act.values,
     })
-    lda_eff_df.to_csv(
-        outdir / "LDA_effortful_pass_fail_coordinates.csv",
+    lda_act_df.to_csv(
+        outdir / f"LDA_{activity_name}_pass_fail_coordinates.csv",
         index=False,
     )
 
     plt.figure(figsize=(8,4))
-    for label in sorted(lda_eff_df["pass_fail"].unique()):
-        mask = lda_eff_df["pass_fail"] == label
+    for label in sorted(lda_act_df["pass_fail"].unique()):
+        mask = lda_act_df["pass_fail"] == label
         plt.scatter(
-            lda_eff_df.loc[mask, "LD1"],
+            lda_act_df.loc[mask, "LD1"],
             np.zeros(mask.sum()),
             label=label,
             alpha=0.8,
         )
     plt.xlabel("LD1")
     plt.yticks([])
-    plt.title("LDA: Effortful Swallow Pass vs Fail")
+    plt.title(f"LDA: {activity_name.title()} Pass vs Fail")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(outdir / "LDA_effortful_pass_fail.png", dpi=150)
+    plt.savefig(outdir / f"LDA_{activity_name}_pass_fail.png", dpi=150)
     plt.close()
-else:
-    print("\nSkipping effortful pass/fail PCA/LDA: need at least two pass_fail classes.")
+
+
+for activity in ["effortful", "masako"]:
+    run_pass_fail_activity_analysis(activity)
 
 
 plt.figure(figsize=(8,6))
@@ -295,6 +328,7 @@ features = [
     "auc_pct",
     "fwhm_seconds",
     "n_humps",
+    "mean_inter_gulp_s",
     "mean_time_to_peak_s",
     "mean_time_to_dip_s"
 ]
