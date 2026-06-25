@@ -57,6 +57,14 @@
 #     outputs/out_test_30_masako_effortful_5_18_26/metrics_pct_30_masako_effortful_5_18_26.csv \
 #     --outdir outputs/out_test_effortful_swallow_fail_6_23_26/analysis
 
+#run metrics_pct containing metrics on ALL 100 eff and 100 mas trials and csv file for the ~80 failed eff trials:
+# python3 scripts/analyze_metrics.py \
+#     --metrics \
+#     outputs/out_test_effortful_swallow_fail_6_23_26/metrics_pct_effortful_swallow_fail_6_23_26.csv \
+#     outputs/full_eff_mas_csv_plots/metrics_pct.csv \
+#     --outdir outputs/out_test_effortful_swallow_fail_6_23_26/analysis
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
