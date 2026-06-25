@@ -72,6 +72,7 @@ import argparse
 from pathlib import Path
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
+import seaborn as sns
 
 parser = argparse.ArgumentParser()
 
@@ -248,6 +249,31 @@ def run_pass_fail_activity_analysis(activity_name: str):
     plt.legend()
     plt.tight_layout()
     plt.savefig(outdir / f"PCA_{activity_name}_pass_fail.png", dpi=150)
+    plt.close()
+
+    loading_df_act = pd.DataFrame(
+        pca_act.components_.T,
+        index=features,
+        columns=["PC1", "PC2"],
+    )
+    loading_df_act.to_csv(
+        outdir / f"PCA_feature_loadings_{activity_name}_pass_fail.csv",
+        index=True,
+    )
+
+    plt.figure(figsize=(6,4))
+    sns.heatmap(
+        loading_df_act,
+        annot=True,
+        cmap="coolwarm",
+        center=0,
+    )
+    plt.title(f"PCA Feature Loadings ({activity_name.title()} Pass vs Fail)")
+    plt.tight_layout()
+    plt.savefig(
+        outdir / f"PCA_feature_loadings_{activity_name}_pass_fail.png",
+        dpi=150,
+    )
     plt.close()
 
     lda_act = LinearDiscriminantAnalysis(n_components=1)
@@ -720,7 +746,6 @@ for f in features:
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
-import seaborn as sns
 
 # ----------------------------
 # Random Forest model
