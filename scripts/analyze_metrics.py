@@ -719,7 +719,7 @@ for f in features:
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
-from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
 import seaborn as sns
 
 # ----------------------------
@@ -786,6 +786,94 @@ plt.title("Random Forest Confusion Matrix")
 plt.tight_layout()
 plt.savefig(outdir / "RF_confusion_matrix.png", dpi=150)
 plt.close()
+
+
+def evaluate_activity_pass_fail(activity_name: str):
+    activity_df = feature_df[feature_df["activity"] == activity_name].copy()
+    y_act = activity_df["pass_fail"].astype(str).str.lower()
+    if set(y_act.unique()) != {"pass", "fail"}:
+        print(
+            f"Skipping RF pass/fail for {activity_name}: need both pass and fail labels."
+        )
+        return
+
+    X_act = activity_df[features].copy()
+    X_act = X_act.replace([np.inf, -np.inf], np.nan).dropna()
+    y_act = y_act.loc[X_act.index]
+
+    if y_act.nunique() != 2:
+        print(
+            f"Skipping RF pass/fail for {activity_name}: insufficient valid rows after dropping missing features."
+        )
+        return
+
+    print(f"\nRandom Forest pass/fail for {activity_name}: {len(X_act)} valid rows")
+    X_act_scaled = StandardScaler().fit_transform(X_act)
+
+    X_train_a, X_test_a, y_train_a, y_test_a = train_test_split(
+        X_act_scaled,
+        y_act,
+        test_size=0.3,
+        random_state=42,
+        stratify=y_act,
+    )
+
+    rf_act = RandomForestClassifier(
+        n_estimators=300,
+        random_state=42,
+        class_weight="balanced",
+    )
+    rf_act.fit(X_train_a, y_train_a)
+    y_pred_a = rf_act.predict(X_test_a)
+    y_proba_a = rf_act.predict_proba(X_test_a)[:, 1]
+
+    print(f"\nClassification Report for {activity_name} pass/fail:")
+    print(classification_report(y_test_a, y_pred_a))
+
+    labels = ["pass", "fail"]
+    cm_act = confusion_matrix(y_test_a, y_pred_a, labels=labels)
+    cm_df_act = pd.DataFrame(
+        cm_act,
+        index=[f"true_{l}" for l in labels],
+        columns=[f"pred_{l}" for l in labels],
+    )
+    cm_df_act.to_csv(outdir / f"RF_confusion_matrix_{activity_name}.csv")
+
+    plt.figure(figsize=(6,5))
+    sns.heatmap(
+        cm_act,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=labels,
+        yticklabels=labels,
+    )
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(f"RF Confusion Matrix (Pass vs Fail: {activity_name})")
+    plt.tight_layout()
+    plt.savefig(outdir / f"RF_confusion_matrix_{activity_name}.png", dpi=150)
+    plt.close()
+
+    from sklearn.metrics import roc_curve, auc
+
+    fpr_a, tpr_a, _ = roc_curve(y_test_a, y_proba_a, pos_label="fail")
+    roc_auc_a = auc(fpr_a, tpr_a)
+
+    plt.figure(figsize=(6,6))
+    plt.plot(fpr_a, tpr_a, label=f"AUC = {roc_auc_a:.3f}")
+    plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title(f"RF ROC Curve (Pass vs Fail: {activity_name})")
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(outdir / f"RF_ROC_curve_{activity_name}.png", dpi=150)
+    plt.close()
+
+
+for activity_name in ["effortful", "masako"]:
+    evaluate_activity_pass_fail(activity_name)
 
 # ----------------------------
 # 4. Feature importance
