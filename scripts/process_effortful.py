@@ -155,8 +155,16 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
     b_len = max(20, int(0.1 * n))
     baseline_pct = float(np.nanmedian(y_pct[:b_len]))
     yb = y_pct - baseline_pct
+    signal_std = np.nanstd(yb)
+    signal_rms = rms = np.sqrt(np.mean(yb**2))
+    signal_mean = np.mean(yb)
 
-    std = np.nanstd(yb) if np.isfinite(np.nanstd(yb)) else 0.0
+    if signal_mean != 0:
+        coeff_variation = signal_std / abs(signal_mean)
+    else:
+        coeff_variation = np.nan    
+
+    std = signal_std if np.isfinite(signal_std) else 0.0
 
     # --- CHANGED: event detection depends on mode ---
     if mode == "troughs":
@@ -228,6 +236,32 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
     mean_time_to_peak_s = np.nanmean(time_to_peak) if len(time_to_peak) else np.nan
     mean_time_to_dip_s = np.nanmean(time_to_dip) if len(time_to_dip) else np.nan
 
+    # --- symmetry index ---
+    if (
+        np.isfinite(mean_time_to_peak_s)
+        and np.isfinite(mean_time_to_dip_s)
+        and mean_time_to_dip_s > 0
+    ):
+        symmetry_index = (
+            mean_time_to_peak_s /
+            mean_time_to_dip_s
+        )
+    else:
+        symmetry_index = np.nan
+
+    #to calculate the rise slope:
+    if np.isfinite(amplitude_pct) and np.isfinite(mean_time_to_peak_s) and mean_time_to_peak_s > 0:
+        rise_slope = amplitude_pct / mean_time_to_peak_s
+    else:
+        rise_slope = np.nan
+
+    #to calculate the recovery slope:
+    if np.isfinite(amplitude_pct) and np.isfinite(mean_time_to_dip_s) and mean_time_to_dip_s > 0:
+        recovery_slope = amplitude_pct / mean_time_to_dip_s
+    else:
+        recovery_slope = np.nan
+        
+
     return dict(
         baseline_pct=baseline_pct,
         amplitude_pct=amplitude_pct,
@@ -239,6 +273,13 @@ def seg_metrics(y_pct, dt=1.0, mode="peaks"):
         mean_inter_gulp_s=mean_inter_gulp_s,
         mean_time_to_peak_s=mean_time_to_peak_s,
         mean_time_to_dip_s=mean_time_to_dip_s,
+        rise_slope=rise_slope,
+        recovery_slope=recovery_slope,
+        signal_std=signal_std,
+        signal_rms=signal_rms,
+        coeff_variation=coeff_variation,
+        signal_mean=signal_mean,
+        symmetry_index=symmetry_index,
     )
 
 
@@ -598,15 +639,61 @@ def main():
             ymean_pct, _ = normalize_percent(ymean)
             m = seg_metrics(ymean_pct, dt=dt, mode=mode)
 
+            channel_amplitudes = []
+
+            for i in range(Y.shape[1]):
+
+                ypc, _ = normalize_percent(Y[:, i])
+
+                m = seg_metrics(ypc, dt=dt, mode=mode)
+
+                channel_amplitudes.append(m["amplitude_pct"])
+                
+            channel_variance = np.var(channel_amplitudes)
+
+            channel_difference = (
+                np.max(channel_amplitudes)
+                -
+                np.min(channel_amplitudes)
+            )
+
+            #adding more peak width feature extraction here:
+            from scipy.signal import peak_widths
+
+            results25 = peak_widths(
+                -yb if mode.startswith("trough") else yb,
+                events,
+                rel_height=0.75,
+            )
+
+            results50 = peak_widths(
+                -yb if mode.startswith("trough") else yb,
+                events,
+                rel_height=0.50,
+            )
+
+            results75 = peak_widths(
+                -yb if mode.startswith("trough") else yb,
+                events,
+                rel_height=0.25,
+            )
+
+            width25 = np.mean(results25[0]) * dt
+            width50 = np.mean(results50[0]) * dt
+            width75 = np.mean(results75[0]) * dt
+
             rows.append(dict(
                 location=loc,
                 gulp=g,
                 channel="mean",
+                channel_variance=channel_variance,
+                max_channel_difference=channel_difference,
                 n=len(seg),
                 mode=mode,
                 pass_fail=seg["pass_fail"].iloc[0],
                 **m
             ))
+
 
             # channel-wise too
             for i, cname in enumerate(channel_cols):
@@ -927,6 +1014,26 @@ def main():
                     prominence=std * 0.25,
                     distance=int(0.6 / dt) if dt > 0 else 3,
                 )
+            
+            # --- peak prominence statistics ---
+            if len(events):
+
+                prominences = props["prominences"]
+
+                mean_prominence = np.mean(prominences)
+                max_prominence = np.max(prominences)
+                std_prominence = np.std(prominences)
+
+            else:
+
+                mean_prominence = np.nan
+                max_prominence = np.nan
+                std_prominence = np.nan
+
+           
+            m["peak_width25_s"] = width25
+            m["peak_width50_s"] = width50
+            m["peak_width75_s"] = width75
 
             # Get trough boundaries for each event (use more permissive trough detection for water)
             troughs_prom = (std * 0.4) if (mode == "troughs_water" and std > 0) else (std * 1.0 if std > 0 else 0.0)
